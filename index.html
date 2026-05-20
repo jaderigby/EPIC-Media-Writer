@@ -1,0 +1,424 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>EPIC Media Writer</title>
+  <style>
+    :root {
+        --black-cherry-bg-start: rgb(51 8 29);
+        --black-cherry-bg-stop: rgb(0 5 11);
+        --black-cherry-border: #78214a;
+        --black-cherry-aside-bg: #1c0615;
+        --blackberry-dk-blue: #0a1520;
+        --blackberry-med-blue: #112234; /* #0f1e2d, #112234 */
+        --blackberry-dk-blue-border: #314a62;
+        --black-cherry-bg-start: var(--blackberry-dk-blue);
+        --black-cherry-bg-stop: rgb(0 5 11);
+        --black-cherry-border: var(--blackberry-dk-blue-border);
+        --black-cherry-aside-bg: var(--blackberry-med-blue);
+        --black-cherry-bg: var(--blackberry-med-blue);
+    }
+
+    body {
+      background: var(--black-cherry-bg-stop);
+      background: linear-gradient(
+          0deg, 
+          var(--black-cherry-bg-stop) 0%, 
+          var(--black-cherry-bg-start) 100%
+      );
+    }
+
+    header {
+      border-bottom: 1px solid var(--black-cherry-border);
+    }
+
+    button {
+      color: white;
+      background: rgba(52, 92, 186, 1);
+      background: linear-gradient(0deg, rgba(52, 92, 186, 1) 0%, rgba(54, 117, 207, 1) 100%);
+      border: 1px solid #47b5c4;
+    }
+
+    textarea {
+      border: 1px solid var(--black-cherry-border);
+    }
+
+    #editor,
+    #editorGhost {
+      border: 1px solid var(--black-cherry-border);
+    }
+
+    #status {
+      background: var(--black-cherry-bg);
+      border: 1px solid var(--black-cherry-border);
+    }
+
+    #validationStatus {
+      background: var(--black-cherry-bg);
+      border: 1px solid var(--black-cherry-border);
+    }
+
+    aside {
+      border-left: 1px solid var(--black-cherry-border);
+      background: var(--black-cherry-aside-bg);
+    }
+
+    .meta-item {
+      border-bottom: 1px solid var(--black-cherry-border);
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, sans-serif;
+      /* background: #111; */
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 16px;
+      /* border-bottom: 1px solid #333; */
+    }
+
+    button {
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+    }
+
+    #filePath {
+      opacity: 0.75;
+      font-size: 13px;
+    }
+
+    main {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      overflow: hidden;
+    }
+
+    #editorWrap {
+      min-width: 0;
+      min-height: 0;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    textarea {
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
+      background: #050505;
+      color: #f4f4f4;
+      /* border: 1px solid #444; */
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.45;
+      resize: none;
+    }
+
+    #status {
+      flex: 0 0 auto;
+      margin-top: 12px;
+      padding: 10px;
+      /* background: #1d1d1d;
+      border: 1px solid #333; */
+      white-space: pre-wrap;
+      font-size: 13px;
+    }
+
+    aside {
+      min-height: 0;
+      /* border-left: 1px solid #333;
+      background: #181818; */
+      padding: 16px;
+      overflow: auto;
+    }
+
+    aside h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+
+    .meta-item {
+      /* border-bottom: 1px solid #333; */
+      padding: 8px 0;
+    }
+
+    .meta-key {
+      font-size: 12px;
+      opacity: 0.7;
+      margin-bottom: 4px;
+    }
+
+    .meta-value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .sidebar-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .sidebar-title-row h2 {
+      margin: 0;
+    }
+
+    .icon-btn {
+      padding: 4px 8px;
+      font-size: 13px;
+    }
+
+    .metadata-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .metadata-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      opacity: 0.85;
+    }
+
+    .metadata-form input,
+    .metadata-form textarea {
+      width: 100%;
+      background: #030303;
+      color: #eee;
+      border: 1px solid #444;
+      padding: 7px;
+      font: inherit;
+    }
+
+    .metadata-form textarea {
+      min-height: 70px;
+      resize: vertical;
+    }
+
+    .metadata-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    #validationStatus {
+      margin-top: 8px;
+      padding: 8px 10px;
+      /* background: #151515;
+      border: 1px solid #2c2c2c; */
+      font-size: 12px;
+      white-space: pre-wrap;
+      color: #9fd39f;
+    }
+
+
+
+
+
+
+
+    #clearSessionBtn {
+      position: relative;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      border: none;
+      background: #1b1b1b;
+      color: #aaa;
+      cursor: pointer;
+      flex: 0 0 auto;
+      transition: all 0.17s ease-in-out;
+    }
+
+    #clearSessionBtn:after {
+      content: "ⓧ";
+      position: absolute;
+      left: 2px;
+      top: 14px;
+      font-size: 1.4rem;
+      line-height: 0;
+    }
+
+    #clearSessionBtn:hover {
+      background: #2a2a2a;
+      color: #fff;
+    }
+
+    #sessionInfo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    #filePath {
+      opacity: 0.75;
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+
+
+
+
+
+
+
+    #editorShell {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    #editor,
+    #editorGhost {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      box-sizing: border-box;
+      /* border: 1px solid #444; */
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    #editorGhost {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      color: #777;
+      background: #050505;
+      opacity: 0.55;
+    }
+
+    #editor {
+      position: relative;
+      background: transparent;
+      color: #f4f4f4;
+      resize: none;
+    }
+
+    #editor.has-ghost {
+      color: transparent;
+      caret-color: #f4f4f4;
+    }
+
+
+
+
+
+    button#unlinkAudioBtn {
+      position: relative;
+      margin-left: 14px;
+      margin-right: 2px;
+      width: 32px;
+      height: 32px;
+      background: none;
+      border: 1px solid transparent;
+      border-radius: 100px;
+      transition: all 0.17s ease-in-out;
+    }
+
+    button#unlinkAudioBtn:after {
+      content: "🔗";
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      font-size: 1rem;
+    }
+
+    button#unlinkAudioBtn:hover {
+      background: #2a2a2a;
+      border: 1px solid #444;
+    } 
+
+    #audioLinkInfo { 
+      opacity: 0.75;
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+
+
+
+    </style>
+  </head>
+  <body>
+    <header>
+      <button id="openBtn">Open Media</button>
+      <button id="storeAudioBtn">Store in Audio</button>
+      <button id="saveBtn" disabled>Save</button>
+      <div id="sessionInfo">
+      <span id="filePath">No file loaded</span>
+
+      <button
+        id="clearSessionBtn"
+        title="Close session"
+      ></button>
+      <button id="unlinkAudioBtn" title="Unlink audio"></button>
+      <span id="audioLinkInfo"></span>
+    </div>
+    </header>
+
+    <main>
+      <section id="editorWrap">
+        <div id="editorShell">
+          <pre id="editorGhost" aria-hidden="true"></pre>
+          <textarea id="editor" spellcheck="false"></textarea>
+        </div>
+      <div id="status">Idle</div>
+      <div id="validationStatus"></div>
+    </section>
+
+    <aside>
+      <div class="sidebar-title-row">
+        <h2 class="sidebar-title">Metadata</h2>
+        <button id="editMetadataBtn" class="icon-btn" disabled title="Edit metadata">✎</button>
+      </div>
+
+      <div id="metadataPanel">No file loaded</div>
+    </aside>
+  </main>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>
