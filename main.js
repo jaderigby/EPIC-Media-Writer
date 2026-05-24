@@ -53,6 +53,177 @@ async function writeStandardMetadata(filePath, fields) {
   throw new Error(`Unsupported media type: ${kind}`);
 }
 
+function previewEpicLines(value, maxLines = 10) {
+  const lines = String(value || "")
+    .trim()
+    .split(/\r?\n/)
+    .slice(0, maxLines);
+
+  if (!lines.length || !lines.join("").trim()) {
+    return "(No EPICX data)";
+  }
+
+  return lines.join("\n");
+}
+
+async function confirmReplaceEmbeddedEpic({
+  parentWindow,
+  projectText,
+  embeddedText,
+  projectLabel,
+  audioLabel
+}) {
+  return await new Promise((resolve) => {
+    const modal = new BrowserWindow({
+      width: 860,
+      height: 520,
+      parent: parentWindow,
+      modal: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      title: "Replace embedded EPICX?",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false
+      }
+    });
+
+    const projectPreview = previewEpicLines(projectText);
+    const embeddedPreview = previewEpicLines(embeddedText);
+
+    const html = `
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          body {
+            margin: 0;
+            padding: 22px;
+            background: #10151d;
+            color: #eef3f8;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+          }
+
+          h1 {
+            font-size: 18px;
+            margin: 0 0 8px;
+          }
+
+          p {
+            margin: 0 0 18px;
+            color: #b8c3cf;
+          }
+
+          .compare {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin-bottom: 18px;
+          }
+
+          .panel {
+            border: 1px solid #2c3a48;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #0b0f15;
+          }
+
+          .label {
+            padding: 10px 12px;
+            border-bottom: 1px solid #2c3a48;
+            color: #d8e2ec;
+            font-size: 13px;
+            font-weight: 600;
+          }
+
+          pre {
+            margin: 0;
+            padding: 12px;
+            min-height: 150px;
+            max-height: 220px;
+            overflow: auto;
+            white-space: pre-wrap;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            line-height: 1.45;
+            color: #edf5ff;
+          }
+
+          .actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+          }
+
+          button {
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid #3a4a5a;
+            background: #17202b;
+            color: #eef3f8;
+            cursor: pointer;
+          }
+
+          button.primary {
+            background: #7b3f32;
+            border-color: #a75b49;
+          }
+        </style>
+      </head>
+      <body>
+        <h1>This audio file already contains different EPICX data.</h1>
+        <p>Replace the embedded EPICX with the current project text?</p>
+
+        <div class="compare">
+          <div class="panel">
+            <div class="label">Current Project: ${escapeHtml(projectLabel)}</div>
+            <pre>${escapeHtml(projectPreview)}</pre>
+          </div>
+
+          <div class="panel">
+            <div class="label">Embedded Audio: ${escapeHtml(audioLabel)}</div>
+            <pre>${escapeHtml(embeddedPreview)}</pre>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button onclick="window.close()">Cancel</button>
+          <button class="primary" onclick="location.href='epic-confirm://replace'">Replace</button>
+        </div>
+      </body>
+      </html>
+    `;
+
+    modal.loadURL(
+      "data:text/html;charset=utf-8," + encodeURIComponent(html)
+    );
+
+    modal.webContents.on("will-navigate", (event, url) => {
+      if (url === "epic-confirm://replace") {
+        event.preventDefault();
+        resolve(true);
+        modal.close();
+      }
+    });
+
+    modal.on("closed", () => {
+      resolve(false);
+    });
+  });
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 ipcMain.handle("parse-epic", async (_event, payload) => {
   return parseEpicText(payload?.source || "");
 });
@@ -72,7 +243,7 @@ ipcMain.handle("save-metadata", async (_event, payload) => {
 
 app.commandLine.appendSwitch("disable-features", "AutofillServerCommunication");
 
-ipcMain.handle("store-in-audio", async (_event, payload) => {
+ipcMain.handle("store-in-audio", async (event, payload) => {
   let targetPath = payload?.targetPath || "";
   const epicx = String(payload?.epicx || "");
 
@@ -92,7 +263,39 @@ ipcMain.handle("store-in-audio", async (_event, payload) => {
     targetPath = result.filePaths[0];
   }
 
-  const outputPath = getEpicAudioOutputPath(targetPath);
+  const existingMetadata =
+    await readMediaMetadata(targetPath);
+
+  const existingEpicx =
+    String(existingMetadata?.epicx || "");
+
+  const hasDifferentEmbeddedEpicx =
+    existingEpicx.trim() &&
+    existingEpicx !== epicx;
+
+  if (hasDifferentEmbeddedEpicx) {
+    const parentWindow =
+      BrowserWindow.fromWebContents(event.sender);
+
+    const shouldReplace =
+      await confirmReplaceEmbeddedEpic({
+        parentWindow,
+        projectText: epicx,
+        embeddedText: existingEpicx,
+        projectLabel:
+          payload?.projectLabel ||
+          "Current project",
+        audioLabel:
+          path.basename(targetPath)
+      });
+
+    if (!shouldReplace) {
+      return null;
+    }
+  }
+
+  const outputPath =
+    getEpicAudioOutputPath(targetPath);
 
   await writeMediaMetadataToOutput({
     sourceAudioPath: targetPath,
@@ -100,16 +303,20 @@ ipcMain.handle("store-in-audio", async (_event, payload) => {
     epicx
   });
 
-  const metadata = await readMediaMetadata(outputPath);
+  const metadata =
+    await readMediaMetadata(outputPath);
+
   const verified =
-    String(metadata.epicx || "") === String(epicx || "");
+    String(metadata.epicx || "") ===
+    String(epicx || "");
 
   return {
     filePath: outputPath,
     metadata,
     verified,
     expectedLength: epicx.length,
-    actualLength: String(metadata.epicx || "").length
+    actualLength:
+      String(metadata.epicx || "").length
   };
 });
 

@@ -531,7 +531,7 @@ function renderMetadataEditForm(metadata) {
       statusEl.textContent = "Saving metadata...";
 
       const result = await window.EpicInspector.saveMetadata({
-        filePath: currentFilePath,
+        filePath: linkedAudioPath || currentFilePath,
         fields
       });
 
@@ -588,6 +588,7 @@ function renderMetadata(metadata) {
   const info = metadata?.listInfo || {};
   const mp3 = metadata?.mp3Tags || {};
   const chunks = metadata?.wavChunks || [];
+  const albumArt = metadata?.albumArt;
 
   const items = isMp3
     ? [
@@ -621,12 +622,24 @@ function renderMetadata(metadata) {
     return String(value ?? "").trim() !== "";
   });
 
-  metadataPanel.innerHTML = visibleItems.map(([key, value]) => `
+  let html = visibleItems.map(([key, value]) => `
     <div class="meta-item">
       <div class="meta-key">${escapeHtml(key)}</div>
       <div class="meta-value">${escapeHtml(value)}</div>
     </div>
   `).join("");
+
+  // Add album art preview at the bottom if available
+  if (albumArt && albumArt.data) {
+    const dataUrl = `data:${albumArt.mimeType};base64,${albumArt.data}`;
+    html += `
+      <div class="album-art-container">
+        <img class="album-art-preview" src="${dataUrl}" alt="Album Art" />
+      </div>
+    `;
+  }
+
+  metadataPanel.innerHTML = html;
 }
 
 editor.addEventListener("focus", showGhostHeaderIfAppropriate);
@@ -656,9 +669,16 @@ editor.addEventListener("keydown", (event) => {
 
 openBtn.addEventListener("click", async () => {
   try {
+    const hadExistingSession =
+      Boolean(currentFilePath || linkedAudioPath);
+
     const result = await window.EpicInspector.openMedia();
 
     if (!result) return;
+
+    if (hadExistingSession) {
+      resetSession();
+    }
 
     currentFilePath = result.filePath;
 
@@ -690,9 +710,6 @@ openBtn.addEventListener("click", async () => {
 
     editor.value = result.epicx || "";
     sourceEditorText = editor.value;
-    sourceHadContent =
-      sourceEditorText.trim().length > 0;
-    sourceEditorText = result.epicx || "";
     sourceHadContent =
       sourceEditorText.trim().length > 0;
 
@@ -729,7 +746,8 @@ storeAudioBtn?.addEventListener("click", async () => {
 
     const result = await window.EpicInspector.storeInAudio({
       targetPath: "",
-      epicx: editor.value
+      epicx: editor.value,
+      projectLabel: getDisplayName(currentFilePath) || "Current project"
     });
 
     if (!result) {
@@ -741,6 +759,8 @@ storeAudioBtn?.addEventListener("click", async () => {
     currentMetadata = result.metadata;
 
     renderMetadata(currentMetadata);
+
+    editMetadataBtn.disabled = false;
 
     statusEl.textContent =
       result.verified
@@ -760,6 +780,7 @@ unlinkAudioBtn?.addEventListener("click", () => {
   linkedAudioPath = "";
   currentMetadata = null;
   metadataPanel.textContent = "";
+  editMetadataBtn.disabled = true;
   saveSessionState();
   updateHeaderState();
 });
@@ -785,7 +806,10 @@ saveBtn.addEventListener("click", async () => {
         const audioResult =
           await window.EpicInspector.storeInAudio({
             targetPath: linkedAudioPath,
-            epicx: editor.value
+            epicx: editor.value,
+            projectLabel:
+              getDisplayName(currentFilePath) ||
+              "Current project"
           });
 
         currentMetadata = audioResult.metadata;
@@ -825,7 +849,7 @@ saveBtn.addEventListener("click", async () => {
     }
 
     const result = await window.EpicInspector.saveMedia({
-      filePath: currentFilePath,
+      filePath: linkedAudioPath || currentFilePath,
       epicx: editor.value
     });
 
