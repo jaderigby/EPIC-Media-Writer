@@ -417,6 +417,13 @@
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
+    button#addAlbumArtBtn {
+      margin-top: 15px;
+      margin-left: auto;
+      margin-right: auto;
+      display: block;
+    }
+
     </style>
   </head>
   <body>
@@ -449,10 +456,13 @@
     <aside>
       <div class="sidebar-title-row">
         <h2 class="sidebar-title">Metadata</h2>
-        <button id="editMetadataBtn" class="icon-btn" disabled title="Edit metadata">✎</button>
+        <div>
+          <button id="editMetadataBtn" class="icon-btn" disabled title="Edit metadata">✎</button>
+        </div>
       </div>
 
       <div id="metadataPanel">No file loaded</div>
+      <button id="addAlbumArtBtn" class="icon-btn" title="Add or replace album art">Add Album Art</button>
     </aside>
   </main>
 

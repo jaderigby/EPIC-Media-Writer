@@ -8,6 +8,7 @@ const filePathEl = document.getElementById("filePath");
 const statusEl = document.getElementById("status");
 const metadataPanel = document.getElementById("metadataPanel");
 const editMetadataBtn = document.getElementById("editMetadataBtn");
+const addAlbumArtBtn = document.getElementById("addAlbumArtBtn");
 const storeAudioBtn = document.getElementById("storeAudioBtn");
 const editorGhost = document.getElementById("editorGhost");
 const audioLinkInfo = document.getElementById("audioLinkInfo");
@@ -30,6 +31,7 @@ const SESSION_KEY = "epic-media-inspector-session";
 
 let currentMetadata = null;
 let metadataEditMode = false;
+let stagedAlbumArt = undefined; // undefined = no change, null = remove, object = { mimeType, data }
 
 let parseTimer = null;
 
@@ -107,6 +109,18 @@ function updateSidebarState() {
   if (sidebarTitle) {
     sidebarTitle.style.display =
       hasMetadata ? "" : "none";
+  }
+
+  if (addAlbumArtBtn) {
+    const albumArtPresent = Boolean(
+      currentMetadata?.albumArt ||
+      currentMetadata?.albumArtInfo
+    );
+
+    // Show Add button only when no album art present and NOT in edit mode.
+    addAlbumArtBtn.style.display = hasMetadata && !albumArtPresent && !metadataEditMode ? "" : "none";
+    addAlbumArtBtn.textContent = "Add Album Art";
+    addAlbumArtBtn.disabled = !hasMetadata;
   }
 }
 
@@ -467,6 +481,34 @@ function getStandardFields(metadata) {
 
 function renderMetadataEditForm(metadata) {
   const fields = getStandardFields(metadata);
+  const existingArtBase64 = metadata?.albumArt || metadata?.albumArtInfo?.data || "";
+  const existingArtMime = metadata?.albumArtMime || metadata?.albumArtInfo?.mimeType || "";
+
+  // start with no staged change
+  stagedAlbumArt = undefined;
+
+  // Only show album art editor inside the edit form when an image already exists.
+  const albumArtEditorHtml = existingArtBase64
+    ? `
+      <div class="meta-item">
+        <div class="meta-key">Album Art</div>
+        <div class="meta-value" id="albumArtEditor">
+          <div id="albumArtContainer" style="position:relative;display:inline-block;">
+            <img id="albumArtPreview" class="album-art-preview" src="${existingArtBase64 && existingArtMime ? `data:${existingArtMime};base64,${existingArtBase64}` : ""}" style="display: ${existingArtBase64 ? "block" : "none"}; max-width:240px; max-height:240px;" alt="Album Art Preview" />
+            <!-- when no existing art, do not show a placeholder box; adding is via the sidebar button -->
+            <div id="albumArtPlaceholder" style="opacity:0.8; display: ${existingArtBase64 ? "none" : "none"}; width:240px; height:240px; background:#f3f3f3; align-items:center; justify-content:center;">No album art</div>
+
+            <!-- overlay icon buttons in top-right -->
+            <div id="albumArtIcons" style="position:absolute; top:6px; right:6px; display:${existingArtBase64 ? "flex" : "none"}; gap:6px;">
+              <button type="button" id="uploadAlbumArtIconBtn" title="Upload/Replace" style="width:32px;height:32px;border-radius:4px;background:rgba(0,0,0,0.6);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">✎</button>
+              <button type="button" id="removeAlbumArtIconBtn" title="Remove" style="width:32px;height:32px;border-radius:4px;background:rgba(200,0,0,0.85);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">🗑</button>
+            </div>
+          </div>
+          <input id="albumArtFileInput" type="file" accept="image/*" style="display:none" />
+        </div>
+      </div>
+    `
+    : '';
 
   metadataPanel.innerHTML = `
     <form id="metadataEditForm" class="metadata-form">
@@ -498,6 +540,8 @@ function renderMetadataEditForm(metadata) {
         <textarea name="comment">${escapeHtml(fields.comment)}</textarea>
       </label>
 
+      ${albumArtEditorHtml}
+
       <div class="metadata-actions">
         <button type="submit">Save Metadata</button>
         <button type="button" id="cancelMetadataEditBtn">Cancel</button>
@@ -505,10 +549,61 @@ function renderMetadataEditForm(metadata) {
     </form>
   `;
 
+  // Wire album art controls (icon upload / remove) for edit-mode staging
+  const uploadBtn = document.getElementById("uploadAlbumArtIconBtn");
+  const removeBtn = document.getElementById("removeAlbumArtIconBtn");
+  const fileInput = document.getElementById("albumArtFileInput");
+  const preview = document.getElementById("albumArtPreview");
+  const placeholder = document.getElementById("albumArtPlaceholder");
+  const iconsWrap = document.getElementById("albumArtIcons");
+
+  uploadBtn?.addEventListener("click", () => fileInput?.click());
+
+  fileInput?.addEventListener("change", (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const m = String(dataUrl).match(/^data:(image\/[^;]+);base64,(.*)$/i);
+      if (m) {
+        stagedAlbumArt = { mimeType: m[1], data: m[2] };
+        if (preview) {
+          preview.src = dataUrl;
+          preview.style.display = "block";
+        }
+        if (placeholder) placeholder.style.display = "none";
+        if (iconsWrap) iconsWrap.style.display = "flex";
+        // ensure the whole meta-item is visible when uploading
+        const metaItem = document.getElementById("albumArtEditor")?.closest('.meta-item');
+        if (metaItem) metaItem.style.display = "";
+      }
+    };
+    reader.readAsDataURL(f);
+  });
+
+  removeBtn?.addEventListener("click", () => {
+    // mark removal (null) so save will remove art
+    stagedAlbumArt = null;
+    if (preview) {
+      preview.src = "";
+      preview.style.display = "none";
+    }
+    // hide placeholder, overlay icons and the entire Album Art meta-item
+    if (placeholder) {
+      placeholder.style.display = "none";
+    }
+    if (iconsWrap) iconsWrap.style.display = "none";
+    const metaItem = document.getElementById("albumArtEditor")?.closest('.meta-item');
+    if (metaItem) metaItem.style.display = "none";
+  });
+
   document.getElementById("cancelMetadataEditBtn")?.addEventListener("click", () => {
     metadataEditMode = false;
     editMetadataBtn.textContent = "✎";
     editMetadataBtn.title = "Edit metadata";
+    // discard staged album art changes
+    stagedAlbumArt = undefined;
     renderMetadata(currentMetadata);
   });
 
@@ -532,16 +627,20 @@ function renderMetadataEditForm(metadata) {
 
       const result = await window.EpicInspector.saveMetadata({
         filePath: linkedAudioPath || currentFilePath,
-        fields
+        fields,
+        albumArt: stagedAlbumArt // undefined => no change, null => remove, object => set
       });
-
       currentMetadata = result.metadata;
+      // clear staged state after successful save
+      stagedAlbumArt = undefined;
       metadataEditMode = false;
 
       editMetadataBtn.textContent = "✎";
       editMetadataBtn.title = "Edit metadata";
 
       renderMetadata(currentMetadata);
+      // update sidebar buttons/visibility after save
+      updateHeaderState();
 
       statusEl.textContent = "Metadata saved.";
       saveSessionState();
@@ -570,7 +669,11 @@ editMetadataBtn?.addEventListener("click", () => {
     editMetadataBtn.textContent = "✎";
     editMetadataBtn.title = "Edit metadata";
   }
+  // Update sidebar controls (hide Add button while editing)
+  updateSidebarState();
 });
+
+addAlbumArtBtn?.addEventListener("click", addAlbumArt);
 
 function escapeHtml(value) {
   return String(value)
@@ -579,6 +682,42 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function getCurrentAudioPath() {
+  return linkedAudioPath || currentFilePath || "";
+}
+
+async function addAlbumArt() {
+  const audioPath = getCurrentAudioPath();
+  if (!audioPath) return;
+
+  try {
+    statusEl.textContent = "Adding album art...";
+
+    const result = await window.EpicInspector.addAlbumArt({
+      audioPath
+    });
+
+    if (!result) {
+      statusEl.textContent = "Album art selection canceled.";
+      return;
+    }
+
+    currentFilePath = result.filePath;
+    currentMetadata = result.metadata;
+    metadataEditMode = false;
+
+    filePathEl.textContent = getDisplayName(currentFilePath);
+    renderMetadata(currentMetadata);
+    editMetadataBtn.disabled = false;
+    statusEl.textContent = "Album art added.";
+    saveSessionState();
+    updateHeaderState();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = `Add album art failed:\n${err.message || err}`;
+  }
 }
 
 function renderMetadata(metadata) {

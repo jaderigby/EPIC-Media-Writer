@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld("EpicInspector", {
   parseEpic: (payload) => ipcRenderer.invoke("parse-epic", payload),
   saveTextAs: (payload) => ipcRenderer.invoke("save-text-as", payload),
   saveText: (payload) => ipcRenderer.invoke("save-text", payload),
-  storeInAudio: (payload) => ipcRenderer.invoke("store-in-audio", payload)
+  storeInAudio: (payload) => ipcRenderer.invoke("store-in-audio", payload),
+  addAlbumArt: (payload) => ipcRenderer.invoke("add-album-art", payload)
 });

@@ -229,9 +229,31 @@ ipcMain.handle("parse-epic", async (_event, payload) => {
 });
 
 ipcMain.handle("save-metadata", async (_event, payload) => {
-  const { filePath, fields } = payload;
+  const { filePath, fields, albumArt } = payload;
+
+  // Read original to preserve EPICX if present
+  const original = await readMediaMetadata(filePath);
 
   await writeStandardMetadata(filePath, fields);
+
+  if (albumArt !== undefined) {
+    const epicx = String(original.epicx || "");
+    const outputPath = getEpicAudioOutputPath(filePath);
+
+    await writeMediaArtworkToOutput({
+      sourceAudioPath: filePath,
+      outputPath,
+      albumArt,
+      epicx
+    });
+
+    const metadata = await readMediaMetadata(outputPath);
+
+    return {
+      metadata,
+      epicx: metadata.epicx || ""
+    };
+  }
 
   const metadata = await readMediaMetadata(filePath);
 
@@ -385,6 +407,58 @@ function getMediaKind(filePath) {
   throw new Error(`Unsupported media type: ${ext}`);
 }
 
+function detectImageMimeType(buffer) {
+  if (!buffer || buffer.length < 8) return "application/octet-stream";
+
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+
+  if (
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x38
+  ) {
+    return "image/gif";
+  }
+
+  if (
+    buffer[0] === 0x42 &&
+    buffer[1] === 0x4d
+  ) {
+    return "image/bmp";
+  }
+
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+
+  return "application/octet-stream";
+}
+
 async function readMediaMetadata(filePath) {
   const kind = getMediaKind(filePath);
 
@@ -426,6 +500,45 @@ async function writeMediaMetadataToOutput({
       outputPath,
       metadata: {
         epicx,
+        timestamp: new Date().toISOString()
+      }
+    });
+    return;
+  }
+
+  throw new Error(`Unsupported media type: ${kind}`);
+}
+
+async function writeMediaArtworkToOutput({
+  sourceAudioPath,
+  outputPath,
+  albumArt,
+  epicx
+}) {
+  const kind = getMediaKind(sourceAudioPath);
+
+  if (kind === "wav") {
+    await writeWavWithMetadata({
+      sourceAudioPath,
+      outputPath,
+      metadata: {
+        epicx,
+        albumArt,
+        removeAlbumArt: albumArt === null,
+        timestamp: new Date().toISOString()
+      }
+    });
+    return;
+  }
+
+  if (kind === "mp3") {
+    await writeMp3WithMetadata({
+      sourceAudioPath,
+      outputPath,
+      metadata: {
+        epicx,
+        albumArt,
+        removeAlbumArt: albumArt === null,
         timestamp: new Date().toISOString()
       }
     });
@@ -494,5 +607,54 @@ ipcMain.handle("save-media", async (_event, payload) => {
     expectedLength: String(epicx || "").length,
     actualLength: String(reread.epicx || "").length,
     reread
+  };
+});
+
+ipcMain.handle("add-album-art", async (_event, payload) => {
+  const audioPath = payload?.audioPath;
+
+  if (!audioPath || !/\.(wav|mp3)$/i.test(audioPath)) {
+    throw new Error("No audio file available for album art.");
+  }
+
+  const result = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "Image Files",
+        extensions: ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
+      }
+    ]
+  });
+
+  if (result.canceled) return null;
+
+  const imagePath = result.filePaths[0];
+  const imageBuffer = await fs.readFile(imagePath);
+  const mimeType = detectImageMimeType(imageBuffer);
+
+  if (!mimeType.startsWith("image/")) {
+    throw new Error("Selected file is not a supported image.");
+  }
+
+  const metadata = await readMediaMetadata(audioPath);
+  const epicx = String(metadata.epicx || "");
+  const outputPath = getEpicAudioOutputPath(audioPath);
+
+  await writeMediaArtworkToOutput({
+    sourceAudioPath: audioPath,
+    outputPath,
+    albumArt: {
+      mimeType,
+      data: imageBuffer.toString("base64")
+    },
+    epicx
+  });
+
+  const newMetadata = await readMediaMetadata(outputPath);
+
+  return {
+    filePath: outputPath,
+    metadata: newMetadata
   };
 });
