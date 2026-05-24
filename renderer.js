@@ -588,7 +588,11 @@ function renderMetadata(metadata) {
   const info = metadata?.listInfo || {};
   const mp3 = metadata?.mp3Tags || {};
   const chunks = metadata?.wavChunks || [];
-  const albumArt = metadata?.albumArt;
+  const albumArtInfo = metadata?.albumArtInfo;
+  const albumArtBase64 = typeof metadata?.albumArt === "string"
+    ? metadata.albumArt
+    : albumArtInfo?.data;
+  const albumArtMime = metadata?.albumArtMime || albumArtInfo?.mimeType;
 
   const items = isMp3
     ? [
@@ -630,8 +634,12 @@ function renderMetadata(metadata) {
   `).join("");
 
   // Add album art preview at the bottom if available
-  if (albumArt && albumArt.data) {
-    const dataUrl = `data:${albumArt.mimeType};base64,${albumArt.data}`;
+  if (
+    albumArtBase64 &&
+    albumArtMime &&
+    String(albumArtMime).startsWith("image/")
+  ) {
+    const dataUrl = `data:${albumArtMime};base64,${albumArtBase64}`;
     html += `
       <div class="album-art-container">
         <img class="album-art-preview" src="${dataUrl}" alt="Album Art" />
