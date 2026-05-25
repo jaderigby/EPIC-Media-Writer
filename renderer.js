@@ -13,6 +13,11 @@ const storeAudioBtn = document.getElementById("storeAudioBtn");
 const editorGhost = document.getElementById("editorGhost");
 const audioLinkInfo = document.getElementById("audioLinkInfo");
 const unlinkAudioBtn = document.getElementById("unlinkAudioBtn");
+const numericOrderingBtn = document.getElementById("numericOrderingBtn");
+
+if (numericOrderingBtn) {
+  numericOrderingBtn.style.display = "none";
+}
 
 function setEditMetadataBtnIcon(active) {
   if (!editMetadataBtn) return;
@@ -27,10 +32,48 @@ const AUTHOR_KEY_PREF = "epic-author-key-preference";
 const AUTHOR_KEY_CORRECTIONS = "epic-author-key-corrections";
 
 let ghostHeaderVisible = false;
+let lastEpicValidationResult = null;
 
 let sourceEditorText = "";
 let sourceHadContent = false;
 let linkedAudioPath = "";
+let manualUndoStack = [];
+let isApplyingUndo = false;
+let lastEditorSnapshot = null;
+
+const MAX_UNDO_SNAPSHOTS = 100;
+
+function pushUndoSnapshot() {
+  manualUndoStack.push(captureEditorSnapshot());
+
+  if (manualUndoStack.length > MAX_UNDO_SNAPSHOTS) {
+    manualUndoStack.shift();
+  }
+}
+
+function captureEditorSnapshot() {
+  return {
+    value: editor.value,
+    selectionStart: editor.selectionStart,
+    selectionEnd: editor.selectionEnd,
+    scrollTop: editor.scrollTop
+  };
+}
+
+function applyEditorSnapshot(snapshot, inputType = "historyUndo") {
+  isApplyingUndo = true;
+
+  editor.value = snapshot.value;
+  editor.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+  editor.scrollTop = snapshot.scrollTop;
+
+  editor.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType
+  }));
+
+  isApplyingUndo = false;
+}
 
 const validationStatusEl =
   document.getElementById("validationStatus");
@@ -355,6 +398,8 @@ function resetSession() {
   currentMetadata = null;
   metadataEditMode = false;
 
+  manualUndoStack = [];
+
   editor.value = "";
   sourceEditorText = "";
   sourceHadContent = false;
@@ -375,10 +420,22 @@ function resetSession() {
 
   setEditMetadataBtnIcon(false);
   editMetadataBtn.title = "Edit metadata";
+  updateNumericOrderingButton(null);
 
   localStorage.removeItem(SESSION_KEY);
   updateHeaderState();
   showGhostHeaderIfAppropriate();
+}
+
+function replaceEditorTextWithManualUndo(nextText) {
+  pushUndoSnapshot();
+
+  editor.value = nextText;
+
+  editor.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType: "insertReplacementText"
+  }));
 }
 
 function scheduleEpicValidation() {
@@ -391,6 +448,9 @@ function scheduleEpicValidation() {
       const result = await window.EpicInspector.parseEpic({
         source: editor.value
       });
+
+      lastEpicValidationResult = result;
+      updateNumericOrderingButton(result);
 
       if (result.ok) {
         validationStatusEl.textContent =
@@ -422,6 +482,88 @@ function scheduleEpicValidation() {
 }
 
 editor.addEventListener("input", scheduleEpicValidation);
+
+function updateNumericOrderingButton(parseResult) {
+  if (!numericOrderingBtn) return;
+
+  const entries =
+    parseResult?.document?.format === "epicx"
+      ? parseResult.document.body?.entries || []
+      : [];
+
+  const shouldShow =
+    entries.length > 0 &&
+    entries.some((entry, index) => entry.index !== index + 1);
+
+  numericOrderingBtn.style.display = shouldShow ? "" : "none";
+}
+
+function resyncEpicxEntryIndexes(source, entries) {
+  if (!entries || entries.length === 0) return source;
+
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    const targetIndex = (entry.loc?.startLine ?? 0) - 1;
+    if (targetIndex < 0 || targetIndex >= lines.length) continue;
+
+    const existing = lines[targetIndex] || "";
+    const leading = existing.match(/^\s*/)?.[0] || "";
+    const trailing = existing.match(/\s*$/)?.[0] || "";
+
+    lines[targetIndex] = `${leading}${i + 1}${trailing}`;
+  }
+
+  return lines.join("\n");
+}
+
+numericOrderingBtn?.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+numericOrderingBtn?.addEventListener("click", async () => {
+  if (!window.EpicInspector?.parseEpic) return;
+
+  const result = await window.EpicInspector.parseEpic({
+    source: editor.value
+  });
+
+  if (!result?.document || result.document.format !== "epicx") {
+    numericOrderingBtn.style.display = "none";
+    return;
+  }
+
+  const entries = result.document.body?.entries || [];
+  const normalized = resyncEpicxEntryIndexes(editor.value, entries);
+
+  if (normalized !== editor.value) {
+    const selectionStart = editor.selectionStart;
+    const selectionEnd = editor.selectionEnd;
+    const scrollTop = editor.scrollTop;
+    const hadFocus = document.activeElement === editor;
+
+    if (!hadFocus) {
+      editor.focus({ preventScroll: true });
+    }
+
+    replaceEditorTextWithManualUndo(normalized);
+
+    editor.setSelectionRange(
+      Math.min(selectionStart, normalized.length),
+      Math.min(selectionEnd, normalized.length)
+    );
+    editor.scrollTop = scrollTop;
+
+    if (!hadFocus) {
+      editor.blur();
+    }
+
+    scheduleEpicValidation();
+    updateHeaderState();
+    saveSessionState();
+  }
+});
 
 function formatParseIssue(issue) {
   if (typeof issue === "string") return issue;
@@ -813,6 +955,25 @@ editor.addEventListener("input", () => {
 });
 
 editor.addEventListener("keydown", (event) => {
+
+  if ((event.metaKey || event.ctrlKey) &&
+    event.key.toLowerCase() === "z") {
+
+    const snapshot = manualUndoStack.pop();
+
+    if (snapshot) {
+      event.preventDefault();
+
+      applyEditorSnapshot(snapshot);
+
+      scheduleEpicValidation();
+      saveSessionState();
+      updateHeaderState();
+
+      return;
+    }
+  }
+
   if (
     ghostHeaderVisible &&
     (event.key === "Enter" || event.key === "Tab")
@@ -837,6 +998,8 @@ openBtn.addEventListener("click", async () => {
     const result = await window.EpicInspector.openMedia();
 
     if (!result) return;
+
+    manualUndoStack = [];
 
     if (hadExistingSession) {
       resetSession();
@@ -1049,5 +1212,12 @@ window.addEventListener("keydown", (ev) => {
   }
 });
 
+editor.addEventListener("beforeinput", () => {
+  if (isApplyingUndo) return;
+
+  pushUndoSnapshot();
+});
+
 restoreSessionState();
 updateHeaderState();
+lastEditorSnapshot = captureEditorSnapshot();
