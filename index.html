@@ -103,7 +103,7 @@
     }
 
     button {
-      padding: 6px 12px;
+      padding: 6px 9px;
       border-radius: 4px;
       cursor: pointer;
     }
@@ -202,7 +202,7 @@
     }
 
     .icon-btn {
-      padding: 4px 8px;
+      padding: 6px 8px 2px;
       font-size: 13px;
     }
 
@@ -424,6 +424,12 @@
       display: block;
     }
 
+    .icon {
+      fill: white;
+      width: 13px;
+      height: 13px;
+    }
+
     </style>
   </head>
   <body>
@@ -457,7 +463,11 @@
       <div class="sidebar-title-row">
         <h2 class="sidebar-title">Metadata</h2>
         <div>
-          <button id="editMetadataBtn" class="icon-btn" disabled title="Edit metadata">✎</button>
+          <button id="editMetadataBtn" class="icon-btn" disabled title="Edit metadata">
+            <svg class="icon edit-mini-icon core-action">
+              <use href="icons.svg#edit-mini-icon"></use>
+            </svg>
+          </button>
         </div>
       </div>
 

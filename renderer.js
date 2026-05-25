@@ -14,6 +14,15 @@ const editorGhost = document.getElementById("editorGhost");
 const audioLinkInfo = document.getElementById("audioLinkInfo");
 const unlinkAudioBtn = document.getElementById("unlinkAudioBtn");
 
+function setEditMetadataBtnIcon(active) {
+  if (!editMetadataBtn) return;
+  editMetadataBtn.innerHTML = `
+    <svg class="icon ${active ? "close-icon" : "edit-mini-icon"} core-action" viewBox="0 0 628 628" aria-hidden="true">
+      <use href="icons.svg#${active ? "close-icon" : "edit-mini-icon"}"></use>
+    </svg>
+  `;
+}
+
 const AUTHOR_KEY_PREF = "epic-author-key-preference";
 const AUTHOR_KEY_CORRECTIONS = "epic-author-key-corrections";
 
@@ -364,7 +373,7 @@ function resetSession() {
 
   editMetadataBtn.disabled = true;
 
-  editMetadataBtn.textContent = "✎";
+  setEditMetadataBtnIcon(false);
   editMetadataBtn.title = "Edit metadata";
 
   localStorage.removeItem(SESSION_KEY);
@@ -500,8 +509,16 @@ function renderMetadataEditForm(metadata) {
 
             <!-- overlay icon buttons in top-right -->
             <div id="albumArtIcons" style="position:absolute; top:6px; right:6px; display:${existingArtBase64 ? "flex" : "none"}; gap:6px;">
-              <button type="button" id="uploadAlbumArtIconBtn" title="Upload/Replace" style="width:32px;height:32px;border-radius:4px;background:rgba(0,0,0,0.6);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">✎</button>
-              <button type="button" id="removeAlbumArtIconBtn" title="Remove" style="width:32px;height:32px;border-radius:4px;background:rgba(200,0,0,0.85);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">🗑</button>
+              <button type="button" id="uploadAlbumArtIconBtn" title="Upload/Replace" style="width:32px;height:32px;border-radius:4px;background:rgba(0,0,0,0.6);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">
+                <svg class="icon edit-mini-icon" viewBox="0 0 628 628" aria-hidden="true" style="width:18px;height:18px;">
+                  <use href="icons.svg#edit-mini-icon"></use>
+                </svg>
+              </button>
+              <button type="button" id="removeAlbumArtIconBtn" title="Remove" style="width:32px;height:32px;border-radius:4px;background:rgba(200,0,0,0.85);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">
+                <svg class="icon delete-icon" viewBox="0 0 628 628" aria-hidden="true" style="width:18px;height:18px;">
+                  <use href="icons.svg#delete-icon"></use>
+                </svg>
+              </button>
             </div>
           </div>
           <input id="albumArtFileInput" type="file" accept="image/*" style="display:none" />
@@ -559,6 +576,9 @@ function renderMetadataEditForm(metadata) {
 
   uploadBtn?.addEventListener("click", () => fileInput?.click());
 
+    if (uploadBtn) {
+      uploadBtn.innerHTML = `<svg class="icon edit-mini-icon core-action"><use href="icons.svg#edit-mini-icon"></use></svg>`;
+    }
   fileInput?.addEventListener("change", (ev) => {
     const f = ev.target.files && ev.target.files[0];
     if (!f) return;
@@ -600,7 +620,7 @@ function renderMetadataEditForm(metadata) {
 
   document.getElementById("cancelMetadataEditBtn")?.addEventListener("click", () => {
     metadataEditMode = false;
-    editMetadataBtn.textContent = "✎";
+    setEditMetadataBtnIcon(false);
     editMetadataBtn.title = "Edit metadata";
     // discard staged album art changes
     stagedAlbumArt = undefined;
@@ -635,7 +655,7 @@ function renderMetadataEditForm(metadata) {
       stagedAlbumArt = undefined;
       metadataEditMode = false;
 
-      editMetadataBtn.textContent = "✎";
+      setEditMetadataBtnIcon(false);
       editMetadataBtn.title = "Edit metadata";
 
       renderMetadata(currentMetadata);
@@ -662,18 +682,13 @@ editMetadataBtn?.addEventListener("click", () => {
 
   if (metadataEditMode) {
     renderMetadataEditForm(currentMetadata);
-    editMetadataBtn.textContent = "×";
+    setEditMetadataBtnIcon(true);
     editMetadataBtn.title = "Close metadata editor";
   } else {
     renderMetadata(currentMetadata);
-    editMetadataBtn.textContent = "✎";
-    editMetadataBtn.title = "Edit metadata";
+    setEditMetadataBtnIcon(false);
   }
-  // Update sidebar controls (hide Add button while editing)
-  updateSidebarState();
 });
-
-addAlbumArtBtn?.addEventListener("click", addAlbumArt);
 
 function escapeHtml(value) {
   return String(value)
@@ -840,7 +855,7 @@ openBtn.addEventListener("click", async () => {
 
       metadataPanel.textContent = "";
       editMetadataBtn.disabled = true;
-      editMetadataBtn.textContent = "✎";
+      setEditMetadataBtnIcon(false);
       editMetadataBtn.title = "Edit metadata";
 
       filePathEl.textContent = getDisplayName(currentFilePath);
@@ -866,7 +881,7 @@ openBtn.addEventListener("click", async () => {
     currentMetadata = result.metadata;
     metadataEditMode = false;
 
-    editMetadataBtn.textContent = "✎";
+    setEditMetadataBtnIcon(false);
     editMetadataBtn.title = "Edit metadata";
     editMetadataBtn.disabled = false;
 
