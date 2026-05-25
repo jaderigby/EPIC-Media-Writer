@@ -430,6 +430,20 @@
       height: 13px;
     }
 
+    #numericOrderingBtn {
+      position: absolute;
+      top: 15px;
+      left: -14px;
+      height: 40px;
+      padding: 3px 5px 1px;
+      z-index: 2;
+    }
+
+    #numericOrderingBtn .icon {
+      width: 21px;
+      height: 21px;
+    }
+
     </style>
   </head>
   <body>
@@ -452,6 +466,11 @@
     <main>
       <section id="editorWrap">
         <div id="editorShell">
+          <button id="numericOrderingBtn" title="Numeric Ordering">
+            <svg class="icon">
+              <use href="icons.svg#numeric-ordering-icon"></use>
+            </svg>
+          </button>
           <pre id="editorGhost" aria-hidden="true"></pre>
           <textarea id="editor" spellcheck="false"></textarea>
         </div>

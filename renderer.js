@@ -947,7 +947,7 @@ unlinkAudioBtn?.addEventListener("click", () => {
   updateHeaderState();
 });
 
-saveBtn.addEventListener("click", async () => {
+async function performSave() {
   try {
     statusEl.textContent = "Saving...";
 
@@ -1037,6 +1037,15 @@ saveBtn.addEventListener("click", async () => {
   } catch (err) {
     console.error(err);
     statusEl.textContent = `Save failed:\n${err.message || err}`;
+  }
+}
+
+saveBtn.addEventListener("click", performSave);
+
+window.addEventListener("keydown", (ev) => {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === "s") {
+    ev.preventDefault();
+    performSave();
   }
 });
 
