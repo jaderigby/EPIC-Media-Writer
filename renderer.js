@@ -107,6 +107,16 @@ ${authorKey}:
 `;
 }
 
+const editorHighlight = document.getElementById("editorHighlight");
+
+function syncEditorHighlight() {
+  if (!editorHighlight) return;
+
+  editorHighlight.innerHTML = renderEpicHighlight(editor.value);
+  editorHighlight.scrollTop = editor.scrollTop;
+  editorHighlight.scrollLeft = editor.scrollLeft;
+}
+
 function showGhostHeaderIfAppropriate() {
   if (!editorGhost) return;
 
@@ -129,6 +139,8 @@ function commitGhostHeader() {
   const stub = getHeaderStub();
 
   editor.value = stub;
+  syncEditorHighlight();
+
   sourceEditorText = "";
 
   ghostHeaderVisible = false;
@@ -365,6 +377,7 @@ function restoreSessionState() {
 
     currentFilePath = state.currentFilePath || "";
     editor.value = state.editorText || "";
+    syncEditorHighlight();
 
     filePathEl.textContent =
       currentFilePath
@@ -407,6 +420,8 @@ function resetSession() {
   manualRedoStack = [];
 
   editor.value = "";
+  syncEditorHighlight();
+
   sourceEditorText = "";
   sourceHadContent = false;
 
@@ -866,6 +881,43 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function renderEpicHighlight(value) {
+  const lines = String(value).split("\n");
+
+  let fenceCount = 0;
+  let inHeader = false;
+
+  return lines.map((rawLine) => {
+    const escaped = escapeHtml(rawLine);
+    const trimmed = rawLine.trim();
+
+    if (trimmed === "---") {
+      fenceCount += 1;
+
+      const html =
+        `<span class="epic-header">${escaped}</span>`;
+
+      inHeader = fenceCount === 1;
+
+      if (fenceCount === 2) {
+        inHeader = false;
+      }
+
+      return html;
+    }
+
+    if (inHeader) {
+      return `<span class="epic-header">${escaped}</span>`;
+    }
+
+    if (/^\s*\[[^\]]+\]\s*$/.test(rawLine)) {
+      return `<span class="epic-section">${escaped}</span>`;
+    }
+
+    return escaped;
+  }).join("\n");
+}
+
 function getCurrentAudioPath() {
   return linkedAudioPath || currentFilePath || "";
 }
@@ -1064,6 +1116,8 @@ openBtn.addEventListener("click", async () => {
 
     if (result.kind === "text") {
       editor.value = result.text || "";
+      syncEditorHighlight();
+
       sourceEditorText = editor.value;
       sourceHadContent =
         editor.value.trim().length > 0;
@@ -1089,6 +1143,8 @@ openBtn.addEventListener("click", async () => {
     }
 
     editor.value = result.epicx || "";
+    syncEditorHighlight();
+    
     sourceEditorText = editor.value;
     sourceHadContent =
       sourceEditorText.trim().length > 0;
@@ -1269,6 +1325,15 @@ window.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     performSave();
   }
+});
+
+editor.addEventListener("input", syncEditorHighlight);
+
+editor.addEventListener("scroll", () => {
+  if (!editorHighlight) return;
+
+  editorHighlight.scrollTop = editor.scrollTop;
+  editorHighlight.scrollLeft = editor.scrollLeft;
 });
 
 editor.addEventListener("beforeinput", () => {

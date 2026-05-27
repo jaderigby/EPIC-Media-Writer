@@ -344,10 +344,10 @@
       resize: none;
     }
 
-    #editor.has-ghost {
+    /* #editor.has-ghost {
       color: transparent;
       caret-color: #f4f4f4;
-    }
+    } */
 
 
 
@@ -488,6 +488,64 @@
       margin: -8px 3px -5px -1px;
     }
 
+
+
+
+
+    #editor,
+    #editorGhost,
+    #editorHighlight {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      box-sizing: border-box;
+      padding: 14px;
+      font-family: var(--mono-font);
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+
+    #editorHighlight {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: #050505;
+      color: #f4f4f4;
+    }
+
+    #editorGhost {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      color: #777;
+      background: transparent;
+      opacity: 0.55;
+    }
+
+    #editor {
+      position: relative;
+      background: transparent;
+      color: transparent;
+      caret-color: #f4f4f4;
+      resize: none;
+    }
+
+    #editorHighlight,
+    #editorGhost {
+      overflow: hidden;
+    }
+
+    .epic-header {
+      color: #8fd3ff;
+    }
+
+    .epic-section {
+      color: #f4b36d;
+      font-weight: 700;
+    }
+
     </style>
   </head>
   <body>
@@ -520,6 +578,7 @@
               <use href="icons.svg#numeric-ordering-icon"></use>
             </svg>
           </button>
+          <pre id="editorHighlight" aria-hidden="true"></pre>
           <pre id="editorGhost" aria-hidden="true"></pre>
           <textarea id="editor" spellcheck="false"></textarea>
         </div>
@@ -540,7 +599,7 @@
       </div>
 
       <div id="metadataPanel">No file loaded</div>
-      <button id="addAlbumArtBtn" class="icon-btn" title="Add or replace album art">Add Album Art</button>
+      <button id="addAlbumArtBtn" title="Add or replace album art">Add Album Art</button>
     </aside>
   </main>
 
