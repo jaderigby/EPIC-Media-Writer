@@ -112,7 +112,9 @@ const editorHighlight = document.getElementById("editorHighlight");
 function syncEditorHighlight() {
   if (!editorHighlight) return;
 
-  editorHighlight.innerHTML = renderEpicHighlight(editor.value);
+  editorHighlight.innerHTML =
+    renderEpicHighlight(editor.value) + "\n";
+    
   editorHighlight.scrollTop = editor.scrollTop;
   editorHighlight.scrollLeft = editor.scrollLeft;
 }
@@ -798,43 +800,78 @@ function highlightInstructionBlocks(text) {
   );
 }
 
+function isEpicxEntryIndexLine(rawLine) {
+  return /^\s*\d+\s*$/.test(rawLine);
+}
+
+function isEpicxTimeLine(rawLine) {
+  return /^\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}(?:\s*-->\s*\d{2}:\d{2}(?::\d{2})?\.\d{3})?\s*$/.test(rawLine);
+}
+
 function renderEpicHighlight(value) {
   const lines = String(value).split("\n");
 
   let fenceCount = 0;
   let inHeader = false;
+  let inEpicxEntry = false;
 
-  return lines.map((rawLine) => {
+  const rendered = lines.map((rawLine, index) => {
     const escaped = escapeHtml(rawLine);
     const highlighted =
       highlightInstructionBlocks(escaped);
     const trimmed = rawLine.trim();
 
+    let lineHtml = highlighted;
+
     if (trimmed === "---") {
       fenceCount += 1;
 
-      const html =
-        `<span class="epic-header">${highlighted}</span>`;
-
       inHeader = fenceCount === 1;
+
+      lineHtml = `<span class="epic-header">${highlighted}</span>`;
 
       if (fenceCount === 2) {
         inHeader = false;
       }
-
-      return html;
+    } else if (inHeader) {
+      lineHtml = `<span class="epic-header">${highlighted}</span>`;
+    } else if (/^\s*\[[^\]]+\]\s*$/.test(rawLine)) {
+      lineHtml = `<span class="epic-section">${highlighted}</span>`;
     }
 
-    if (inHeader) {
-      return `<span class="epic-header">${highlighted}</span>`;
+    const nextLine = lines[index + 1] || "";
+    const startsEpicxEntry =
+      isEpicxEntryIndexLine(rawLine) &&
+      isEpicxTimeLine(nextLine);
+
+    const isBlank =
+      trimmed.length === 0;
+
+    let output = "";
+
+    if (startsEpicxEntry) {
+      if (inEpicxEntry) {
+        output += `</span>`;
+      }
+
+      output += `<span class="epicx-entry">`;
+      inEpicxEntry = true;
     }
 
-    if (/^\s*\[[^\]]+\]\s*$/.test(rawLine)) {
-      return `<span class="epic-section">${highlighted}</span>`;
+    if (inEpicxEntry && isBlank) {
+      output += `${lineHtml}</span>`;
+      inEpicxEntry = false;
+      return output;
     }
 
-    return highlighted;
+    output += lineHtml;
+
+    return output;
   }).join("\n");
+
+  return inEpicxEntry
+    ? `${rendered}</span>`
+    : rendered;
 }
 
 function getCurrentAudioPath() {
