@@ -100,6 +100,7 @@ async function confirmReplaceEmbeddedEpic({
         <meta charset="utf-8" />
         <style>
           body {
+            position: relative;
             margin: 0;
             padding: 22px;
             background: #10151d;
@@ -157,6 +158,10 @@ async function confirmReplaceEmbeddedEpic({
             justify-content: flex-end;
             gap: 10px;
           }
+          
+          .split-actions {
+            justify-content: space-between;
+          }
 
           button {
             padding: 8px 14px;
@@ -171,11 +176,60 @@ async function confirmReplaceEmbeddedEpic({
             background: #7b3f32;
             border-color: #a75b49;
           }
+
+          .modal-close {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+
+            width: 32px;
+            height: 32px;
+
+            border: 1px solid #3a4a5a;
+            border-radius: 8px;
+
+            background: #17202b;
+            color: #dbe7f3;
+
+            font-size: 20px;
+            line-height: 1;
+            cursor: pointer;
+          }
+
+          .modal-close:hover {
+            background: #223041;
+          }
+          
+          .icon {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+            pointer-events: none;
+          }
+
+          .close-icon {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+          }
         </style>
       </head>
       <body>
+        <button
+          class="modal-close"
+          onclick="window.close()"
+          aria-label="Close"
+        >
+           <svg
+            class="icon close-icon"
+            viewBox="0 0 628 628"
+            aria-hidden="true"
+          >
+            <path d="M235.961,313.85L85.782,163.67L163.621,85.831L313.8,236.011L463.979,85.831L541.818,163.67L391.639,313.85L541.818,464.029L463.979,541.868L313.8,391.689L163.621,541.868L85.782,464.029L235.961,313.85Z"/>
+          </svg>
+        </button>
         <h1>This audio file already contains different EPICX data.</h1>
-        <p>Replace the embedded EPICX with the current project text?</p>
+        <p>RChoose which EPICX content to use for this audio file.</p>
 
         <div class="compare">
           <div class="panel">
@@ -189,9 +243,20 @@ async function confirmReplaceEmbeddedEpic({
           </div>
         </div>
 
-        <div class="actions">
-          <button onclick="window.close()">Cancel</button>
-          <button class="primary" onclick="location.href='epic-confirm://replace'">Replace</button>
+        <div class="actions split-actions">
+          <button
+            class="primary"
+            onclick="location.href='epic-confirm://replace-current'"
+          >
+            Replace with Current Project
+          </button>
+
+          <button
+            class="primary"
+            onclick="location.href='epic-confirm://keep-existing'"
+          >
+            Keep Existing Content
+          </button>
         </div>
       </body>
       </html>
@@ -202,15 +267,22 @@ async function confirmReplaceEmbeddedEpic({
     );
 
     modal.webContents.on("will-navigate", (event, url) => {
-      if (url === "epic-confirm://replace") {
+      if (url === "epic-confirm://replace-current") {
         event.preventDefault();
-        resolve(true);
+        resolve("replace-current");
+        modal.close();
+        return;
+      }
+
+      if (url === "epic-confirm://keep-existing") {
+        event.preventDefault();
+        resolve("keep-existing");
         modal.close();
       }
     });
 
     modal.on("closed", () => {
-      resolve(false);
+      resolve(null);
     });
   });
 }
@@ -299,7 +371,7 @@ ipcMain.handle("store-in-audio", async (event, payload) => {
     const parentWindow =
       BrowserWindow.fromWebContents(event.sender);
 
-    const shouldReplace =
+    const choice =
       await confirmReplaceEmbeddedEpic({
         parentWindow,
         projectText: epicx,
@@ -311,8 +383,20 @@ ipcMain.handle("store-in-audio", async (event, payload) => {
           path.basename(targetPath)
       });
 
-    if (!shouldReplace) {
+    if (choice === null) {
       return null;
+    }
+
+    if (choice === "keep-existing") {
+      return {
+        filePath: targetPath,
+        metadata: existingMetadata,
+        epicx: existingEpicx,
+        verified: true,
+        expectedLength: existingEpicx.length,
+        actualLength: existingEpicx.length,
+        useExistingEpicx: true
+      };
     }
   }
 

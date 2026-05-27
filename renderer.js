@@ -19,6 +19,10 @@ if (numericOrderingBtn) {
   numericOrderingBtn.style.display = "none";
 }
 
+function isSavedTextProject() {
+  return /\.(epic|epicx)$/i.test(currentFilePath || "");
+}
+
 function setEditMetadataBtnIcon(active) {
   if (!editMetadataBtn) return;
   editMetadataBtn.innerHTML = `
@@ -114,7 +118,7 @@ function syncEditorHighlight() {
 
   editorHighlight.innerHTML =
     renderEpicHighlight(editor.value) + "\n";
-    
+
   editorHighlight.scrollTop = editor.scrollTop;
   editorHighlight.scrollLeft = editor.scrollLeft;
 }
@@ -158,6 +162,21 @@ function commitGhostHeader() {
   scheduleEpicValidation();
   saveSessionState();
   updateHeaderState();
+}
+
+function hasUnsavedChanges() {
+  return editor.value !== sourceEditorText;
+}
+
+async function confirmDiscardUnsavedChanges() {
+  if (editor.value === sourceEditorText) return true;
+
+  return showConfirmModal({
+    title: "Unsaved Changes",
+    message: "You have unsaved changes that will be lost if you proceed. Do you still want to continue?",
+    confirmLabel: "Yes",
+    cancelLabel: "Cancel"
+  });
 }
 
 function updateSidebarState() {
@@ -249,6 +268,56 @@ function moveToNextHeaderValue() {
   return false;
 }
 
+function showConfirmModal({
+  title = "Confirm",
+  message,
+  confirmLabel = "Yes",
+  cancelLabel = "Cancel"
+}) {
+  const modal = document.getElementById("confirmModal");
+  const titleEl = document.getElementById("confirmModalTitle");
+  const messageEl = document.getElementById("confirmModalMessage");
+  const yesBtn = document.getElementById("confirmModalYesBtn");
+  const cancelBtn = document.getElementById("confirmModalCancelBtn");
+
+  return new Promise((resolve) => {
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    yesBtn.textContent = confirmLabel;
+    cancelBtn.textContent = cancelLabel;
+
+    modal.classList.remove("hidden");
+
+    const close = (value) => {
+      modal.classList.add("hidden");
+      yesBtn.removeEventListener("click", onYes);
+      cancelBtn.removeEventListener("click", onCancel);
+      modal.removeEventListener("click", onBackdrop);
+      window.removeEventListener("keydown", onKeydown);
+      resolve(value);
+    };
+
+    const onYes = () => close(true);
+    const onCancel = () => close(false);
+
+    const onBackdrop = (event) => {
+      if (event.target === modal) close(false);
+    };
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") close(false);
+      if (event.key === "Enter") close(true);
+    };
+
+    yesBtn.addEventListener("click", onYes);
+    cancelBtn.addEventListener("click", onCancel);
+    modal.addEventListener("click", onBackdrop);
+    window.addEventListener("keydown", onKeydown);
+
+    cancelBtn.focus();
+  });
+}
+
 function rememberAuthorKeyCorrection() {
   const match = editor.value.match(/^---\s*\n[\s\S]*?\n(Creator|Artist|Author):/m);
   if (!match) return;
@@ -311,13 +380,17 @@ function updateHeaderState() {
   const isAudioSession =
     /\.(wav|mp3)$/i.test(currentFilePath || "");
 
+  const canStoreInAudio =
+    hasContent &&
+    isSavedTextProject() &&
+    !hasLinkedAudio &&
+    !isAudioSession;
+
   storeAudioBtn.style.display =
-    hasContent && !hasLinkedAudio && !isAudioSession
-      ? ""
-      : "none";
+    canStoreInAudio ? "" : "none";
 
   storeAudioBtn.disabled =
-    !hasContent || hasLinkedAudio || isAudioSession;
+    !canStoreInAudio;
 
   const shouldShowSession =
     Boolean(currentFilePath);
@@ -763,7 +836,8 @@ function renderMetadataEditForm(metadata) {
   });
 }
 
-clearSessionBtn?.addEventListener("click", () => {
+clearSessionBtn?.addEventListener("click", async () => {
+  if (!(await confirmDiscardUnsavedChanges())) return;
   resetSession();
 });
 
@@ -921,10 +995,13 @@ function wireAlbumArtNormalModeActions() {
     ?.addEventListener("click", confirmRemoveAlbumArt);
 }
 
-function confirmRemoveAlbumArt() {
-  const ok = window.confirm(
-    "Remove album art from this audio file?\n\nThis cannot be undone unless you add the image again."
-  );
+async function confirmRemoveAlbumArt() {
+  const ok = await showConfirmModal({
+    title: "Remove Album Art",
+    message: "Remove album art from this audio file? This cannot be undone unless you add the image again.",
+    confirmLabel: "Yes",
+    cancelLabel: "Cancel"
+  });
 
   if (!ok) return;
 
@@ -1115,6 +1192,8 @@ editor.addEventListener("keydown", (event) => {
 
 openBtn.addEventListener("click", async () => {
   try {
+    if (!(await confirmDiscardUnsavedChanges())) return;
+
     const hadExistingSession =
       Boolean(currentFilePath || linkedAudioPath);
 
@@ -1197,16 +1276,75 @@ openBtn.addEventListener("click", async () => {
 
 storeAudioBtn?.addEventListener("click", async () => {
   try {
-    statusEl.textContent = "Linking audio...";
+    if (!isSavedTextProject()) {
+      statusEl.textContent =
+        "Save this EPIC project before storing it in audio.";
+      return;
+    }
+
+    if (hasUnsavedChanges()) {
+      const ok = await showConfirmModal({
+        title: "Save Changes First",
+        message: "This project has unsaved changes. Save them before storing in audio?",
+        confirmLabel: "Save",
+        cancelLabel: "Cancel"
+      });
+
+      if (!ok) return;
+
+      await performSave();
+
+      if (hasUnsavedChanges()) {
+        statusEl.textContent =
+          "Store in Audio canceled because the project was not saved.";
+        return;
+      }
+    }
+
+    statusEl.textContent = "Storing in audio...";
 
     const result = await window.EpicInspector.storeInAudio({
       targetPath: "",
       epicx: editor.value,
-      projectLabel: getDisplayName(currentFilePath) || "Current project"
+      projectLabel:
+        currentFilePath
+          ? getDisplayName(currentFilePath)
+          : "Unsaved EPIC project"
     });
 
     if (!result) {
       statusEl.textContent = "Link audio canceled.";
+      return;
+    }
+
+    if (result.useExistingEpicx) {
+      currentFilePath = result.filePath;
+      linkedAudioPath = "";
+
+      currentMetadata = result.metadata;
+      metadataEditMode = false;
+
+      editor.value = result.epicx || "";
+      syncEditorHighlight();
+
+      sourceEditorText = editor.value;
+      sourceHadContent =
+        editor.value.trim().length > 0;
+
+      filePathEl.textContent =
+        getDisplayName(currentFilePath);
+
+      renderMetadata(currentMetadata);
+
+      editMetadataBtn.disabled = false;
+
+      statusEl.textContent =
+        `Opened audio using existing embedded EPICX:\n${getDisplayName(currentFilePath)}`;
+
+      scheduleEpicValidation();
+      saveSessionState();
+      updateHeaderState();
+
       return;
     }
 
@@ -1219,8 +1357,8 @@ storeAudioBtn?.addEventListener("click", async () => {
 
     statusEl.textContent =
       result.verified
-        ? `Linked and stored in audio:\n${getDisplayName(linkedAudioPath)}`
-        : `Linked, but verification failed:\n${getDisplayName(linkedAudioPath)}`;
+        ? `Stored in audio:\n${getDisplayName(linkedAudioPath)}`
+        : `Stored in audio, but verification failed:\n${getDisplayName(linkedAudioPath)}`;
 
     saveSessionState();
     updateHeaderState();

@@ -272,13 +272,28 @@
       transition: all 0.17s ease-in-out;
     }
 
-    #clearSessionBtn:after {
+    /* #clearSessionBtn:after {
       content: "ⓧ";
       position: absolute;
       left: 3px;
       top: 14.5px;
       font-size: 1.4rem;
       line-height: 0;
+    } */
+
+    #clearSessionBtn {
+      opacity: 0.7;
+      transition: all 0.17s ease-in-out;
+    }
+
+    #clearSessionBtn .icon {
+      width: 23px;
+      height: 23px;
+      margin: -3px 0 -2px -5px;
+    }
+
+    #clearSessionBtn:hover {
+      opacity: 1;
     }
 
     #clearSessionBtn:hover {
@@ -357,25 +372,45 @@
       position: relative;
       margin-left: 14px;
       margin-right: 2px;
-      width: 32px;
-      height: 32px;
+      margin-top: -2px;
+      margin-bottom: -4px;
+      width: 36px;
+      height: 36px;
       background: none;
       border: 1px solid transparent;
       border-radius: 100px;
       transition: all 0.17s ease-in-out;
     }
 
-    button#unlinkAudioBtn:after {
+    /* button#unlinkAudioBtn:after {
       content: "🔗";
       position: absolute;
       top: 6px;
       left: 7px;
       font-size: 1rem;
+    } */
+
+    button#unlinkAudioBtn .icon {
+      position: absolute;
+      top: 7px;
+      left: 7px;
+      fill: #fff;
+      width: 20px;
+      height: 20px;
+      opacity: 0.7;
+      transition: all 0.17s ease-in-out;
+    }
+
+    button#unlinkAudioBtn:hover .icon {
+      fill: #fff;
+      width: 20px;
+      height: 20px;
+      opacity: 1;
     }
 
     button#unlinkAudioBtn:hover {
-      background: #2a2a2a;
-      border: 1px solid #444;
+      background: #112234;
+      border: 1px solid #314a62;
     } 
 
     #audioLinkInfo { 
@@ -625,6 +660,45 @@
       margin: calc(-1 * var(--top-entry-space)) 0 calc(-1 * var(--bottom-entry-space));
     }
 
+    .confirm-modal.hidden {
+      display: none;
+    }
+
+    .confirm-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgb(0 0 0 / 55%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .confirm-modal-card {
+      width: min(420px, calc(100vw - 40px));
+      background: #081827;
+      border: 1px solid var(--blackberry-dk-blue-border);
+      border-radius: 10px;
+      padding: 18px;
+      box-shadow: 0 18px 50px rgb(0 0 0 / 45%);
+    }
+
+    .confirm-modal-card h3 {
+      margin: 0 0 10px;
+    }
+
+    .confirm-modal-card p {
+      margin: 0;
+      line-height: 1.45;
+    }
+
+    .confirm-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
     </style>
   </head>
   <body>
@@ -642,9 +716,17 @@
       <button
         id="clearSessionBtn"
         title="Close session"
-      ></button>
+      >
+      <svg class="icon store-icon">
+        <use href="icons.svg#close-circle-icon"></use>
+      </svg>
+      </button>
       <button id="storeAudioBtn">Store in Audio</button>
-      <button id="unlinkAudioBtn" title="Unlink audio"></button>
+      <button id="unlinkAudioBtn" title="Unlink audio">
+        <svg class="icon">
+          <use href="icons.svg#link-icon"></use>
+        </svg>
+      </button>
       <span id="audioLinkInfo"></span>
     </div>
     </header>
@@ -681,6 +763,17 @@
       <button id="addAlbumArtBtn" title="Add or replace album art">Add Album Art</button>
     </aside>
   </main>
+
+  <div id="confirmModal" class="confirm-modal hidden">
+    <div class="confirm-modal-card">
+      <h3 id="confirmModalTitle">Confirm</h3>
+      <p id="confirmModalMessage"></p>
+      <div class="confirm-modal-actions">
+        <button id="confirmModalCancelBtn">Cancel</button>
+        <button id="confirmModalYesBtn">Yes</button>
+      </div>
+    </div>
+  </div>
 
   <script src="./renderer.js"></script>
 </body>
