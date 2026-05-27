@@ -667,42 +667,6 @@ function getStandardFields(metadata) {
 
 function renderMetadataEditForm(metadata) {
   const fields = getStandardFields(metadata);
-  const existingArtBase64 = metadata?.albumArt || metadata?.albumArtInfo?.data || "";
-  const existingArtMime = metadata?.albumArtMime || metadata?.albumArtInfo?.mimeType || "";
-
-  // start with no staged change
-  stagedAlbumArt = undefined;
-
-  // Only show album art editor inside the edit form when an image already exists.
-  const albumArtEditorHtml = existingArtBase64
-    ? `
-      <div class="meta-item">
-        <div class="meta-key">Album Art</div>
-        <div class="meta-value" id="albumArtEditor">
-          <div id="albumArtContainer" style="position:relative;display:inline-block;">
-            <img id="albumArtPreview" class="album-art-preview" src="${existingArtBase64 && existingArtMime ? `data:${existingArtMime};base64,${existingArtBase64}` : ""}" style="display: ${existingArtBase64 ? "block" : "none"}; max-width:240px; max-height:240px;" alt="Album Art Preview" />
-            <!-- when no existing art, do not show a placeholder box; adding is via the sidebar button -->
-            <div id="albumArtPlaceholder" style="opacity:0.8; display: ${existingArtBase64 ? "none" : "none"}; width:240px; height:240px; background:#f3f3f3; align-items:center; justify-content:center;">No album art</div>
-
-            <!-- overlay icon buttons in top-right -->
-            <div id="albumArtIcons" style="position:absolute; top:34px; right:6px; display:${existingArtBase64 ? "flex" : "none"}; gap:6px;">
-              <button type="button" id="uploadAlbumArtIconBtn" title="Upload/Replace" style="width:32px;height:32px;border-radius:4px;background:rgba(0,0,0,0.6);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">
-                <svg class="icon edit-mini-icon" viewBox="0 0 628 628" aria-hidden="true" style="width:18px;height:18px;">
-                  <use href="icons.svg#edit-mini-icon"></use>
-                </svg>
-              </button>
-              <button type="button" id="removeAlbumArtIconBtn" title="Remove" style="width:32px;height:32px;border-radius:4px;background:rgba(200,0,0,0.85);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">
-                <svg class="icon delete-icon" viewBox="0 0 628 628" aria-hidden="true" style="width:18px;height:18px;">
-                  <use href="icons.svg#delete-icon"></use>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <input id="albumArtFileInput" type="file" accept="image/*" style="display:none" />
-        </div>
-      </div>
-    `
-    : '';
 
   metadataPanel.innerHTML = `
     <form id="metadataEditForm" class="metadata-form">
@@ -734,8 +698,6 @@ function renderMetadataEditForm(metadata) {
         <textarea name="comment">${escapeHtml(fields.comment)}</textarea>
       </label>
 
-      ${albumArtEditorHtml}
-
       <div class="metadata-actions">
         <button type="submit">
           <svg class="icon store-icon">
@@ -748,64 +710,10 @@ function renderMetadataEditForm(metadata) {
     </form>
   `;
 
-  // Wire album art controls (icon upload / remove) for edit-mode staging
-  const uploadBtn = document.getElementById("uploadAlbumArtIconBtn");
-  const removeBtn = document.getElementById("removeAlbumArtIconBtn");
-  const fileInput = document.getElementById("albumArtFileInput");
-  const preview = document.getElementById("albumArtPreview");
-  const placeholder = document.getElementById("albumArtPlaceholder");
-  const iconsWrap = document.getElementById("albumArtIcons");
-
-  uploadBtn?.addEventListener("click", () => fileInput?.click());
-
-    if (uploadBtn) {
-      uploadBtn.innerHTML = `<svg class="icon edit-mini-icon core-action"><use href="icons.svg#edit-mini-icon"></use></svg>`;
-    }
-  fileInput?.addEventListener("change", (ev) => {
-    const f = ev.target.files && ev.target.files[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      const m = String(dataUrl).match(/^data:(image\/[^;]+);base64,(.*)$/i);
-      if (m) {
-        stagedAlbumArt = { mimeType: m[1], data: m[2] };
-        if (preview) {
-          preview.src = dataUrl;
-          preview.style.display = "block";
-        }
-        if (placeholder) placeholder.style.display = "none";
-        if (iconsWrap) iconsWrap.style.display = "flex";
-        // ensure the whole meta-item is visible when uploading
-        const metaItem = document.getElementById("albumArtEditor")?.closest('.meta-item');
-        if (metaItem) metaItem.style.display = "";
-      }
-    };
-    reader.readAsDataURL(f);
-  });
-
-  removeBtn?.addEventListener("click", () => {
-    // mark removal (null) so save will remove art
-    stagedAlbumArt = null;
-    if (preview) {
-      preview.src = "";
-      preview.style.display = "none";
-    }
-    // hide placeholder, overlay icons and the entire Album Art meta-item
-    if (placeholder) {
-      placeholder.style.display = "none";
-    }
-    if (iconsWrap) iconsWrap.style.display = "none";
-    const metaItem = document.getElementById("albumArtEditor")?.closest('.meta-item');
-    if (metaItem) metaItem.style.display = "none";
-  });
-
   document.getElementById("cancelMetadataEditBtn")?.addEventListener("click", () => {
     metadataEditMode = false;
     setEditMetadataBtnIcon(false);
     editMetadataBtn.title = "Edit metadata";
-    // discard staged album art changes
-    stagedAlbumArt = undefined;
     renderMetadata(currentMetadata);
   });
 
@@ -881,6 +789,15 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function highlightInstructionBlocks(text) {
+  return text.replace(
+    /\{\{([\s\S]*?)\}\}/g,
+    (_, inner) => {
+      return `<span class="epic-instruction">{{${inner}}}</span>`;
+    }
+  );
+}
+
 function renderEpicHighlight(value) {
   const lines = String(value).split("\n");
 
@@ -889,13 +806,15 @@ function renderEpicHighlight(value) {
 
   return lines.map((rawLine) => {
     const escaped = escapeHtml(rawLine);
+    const highlighted =
+      highlightInstructionBlocks(escaped);
     const trimmed = rawLine.trim();
 
     if (trimmed === "---") {
       fenceCount += 1;
 
       const html =
-        `<span class="epic-header">${escaped}</span>`;
+        `<span class="epic-header">${highlighted}</span>`;
 
       inHeader = fenceCount === 1;
 
@@ -907,14 +826,14 @@ function renderEpicHighlight(value) {
     }
 
     if (inHeader) {
-      return `<span class="epic-header">${escaped}</span>`;
+      return `<span class="epic-header">${highlighted}</span>`;
     }
 
     if (/^\s*\[[^\]]+\]\s*$/.test(rawLine)) {
-      return `<span class="epic-section">${escaped}</span>`;
+      return `<span class="epic-section">${highlighted}</span>`;
     }
 
-    return escaped;
+    return highlighted;
   }).join("\n");
 }
 
@@ -954,6 +873,51 @@ async function addAlbumArt() {
   } catch (err) {
     console.error(err);
     statusEl.textContent = `Add album art failed:\n${err.message || err}`;
+  }
+}
+
+function wireAlbumArtNormalModeActions() {
+  document.getElementById("replaceAlbumArtBtn")
+    ?.addEventListener("click", addAlbumArt);
+
+  document.getElementById("deleteAlbumArtBtn")
+    ?.addEventListener("click", confirmRemoveAlbumArt);
+}
+
+function confirmRemoveAlbumArt() {
+  const ok = window.confirm(
+    "Remove album art from this audio file?\n\nThis cannot be undone unless you add the image again."
+  );
+
+  if (!ok) return;
+
+  removeAlbumArt();
+}
+
+async function removeAlbumArt() {
+  const audioPath = getCurrentAudioPath();
+  if (!audioPath) return;
+
+  try {
+    statusEl.textContent = "Removing album art...";
+
+    const result = await window.EpicInspector.saveMetadata({
+      filePath: audioPath,
+      fields: {},
+      albumArt: null
+    });
+
+    currentMetadata = result.metadata;
+    metadataEditMode = false;
+
+    renderMetadata(currentMetadata);
+    updateHeaderState();
+
+    statusEl.textContent = "Album art removed.";
+    saveSessionState();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = `Remove album art failed:\n${err.message || err}`;
   }
 }
 
@@ -1016,14 +980,32 @@ function renderMetadata(metadata) {
     String(albumArtMime).startsWith("image/")
   ) {
     const dataUrl = `data:${albumArtMime};base64,${albumArtBase64}`;
+
     html += `
       <div class="album-art-container">
-        <img class="album-art-preview" src="${dataUrl}" alt="Album Art" />
+        <div class="album-art-shell">
+          <img class="album-art-preview" src="${dataUrl}" alt="Album Art" />
+
+          <div class="album-art-hover-actions">
+            <button type="button" id="replaceAlbumArtBtn" title="Replace album art">
+              <svg class="icon edit-mini-icon core-action">
+                <use href="icons.svg#edit-mini-icon"></use>
+              </svg>
+            </button>
+
+            <button type="button" id="deleteAlbumArtBtn" title="Remove album art">
+              <svg class="icon delete-icon core-action">
+                <use href="icons.svg#delete-icon"></use>
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     `;
   }
 
   metadataPanel.innerHTML = html;
+  wireAlbumArtNormalModeActions();
 }
 
 editor.addEventListener("focus", showGhostHeaderIfAppropriate);

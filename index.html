@@ -538,11 +538,80 @@
     }
 
     .epic-header {
-      color: #8fd3ff;
+      color: #90d6fe; /* 8fd3ff, 90d6fe */
     }
 
     .epic-section {
       color: #f4b36d;
+      font-weight: 700;
+    }
+
+
+
+
+
+
+    .album-art-shell {
+      position: relative;
+      display: inline-block;
+    }
+
+    .album-art-hover-actions {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 6px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease-in-out;
+    }
+
+    .album-art-shell:hover .album-art-hover-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .album-art-hover-actions button {
+      width: 32px;
+      height: 32px;
+      padding: 6px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.65);
+    }
+
+
+
+
+    .album-art-hover-actions {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 6px;
+
+      opacity: 0;
+      transform: translateY(-4px);
+
+      pointer-events: none;
+
+      transition:
+        opacity 0.14s ease,
+        transform 0.14s ease;
+    }
+
+    .album-art-shell:hover .album-art-hover-actions {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .epic-section .epic-instruction {
+      color: #db63b1;
+    }
+
+    .epic-instruction {
+      color: #c177de;
       font-weight: 700;
     }
 
