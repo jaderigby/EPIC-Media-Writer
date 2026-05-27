@@ -38,13 +38,14 @@ let sourceEditorText = "";
 let sourceHadContent = false;
 let linkedAudioPath = "";
 let manualUndoStack = [];
+let manualRedoStack = [];
 let isApplyingUndo = false;
-let lastEditorSnapshot = null;
 
 const MAX_UNDO_SNAPSHOTS = 100;
 
 function pushUndoSnapshot() {
   manualUndoStack.push(captureEditorSnapshot());
+  manualRedoStack = [];
 
   if (manualUndoStack.length > MAX_UNDO_SNAPSHOTS) {
     manualUndoStack.shift();
@@ -61,6 +62,8 @@ function captureEditorSnapshot() {
 }
 
 function applyEditorSnapshot(snapshot, inputType = "historyUndo") {
+  const before = captureEditorSnapshot();
+
   isApplyingUndo = true;
 
   editor.value = snapshot.value;
@@ -73,6 +76,8 @@ function applyEditorSnapshot(snapshot, inputType = "historyUndo") {
   }));
 
   isApplyingUndo = false;
+
+  return before;
 }
 
 const validationStatusEl =
@@ -399,6 +404,7 @@ function resetSession() {
   metadataEditMode = false;
 
   manualUndoStack = [];
+  manualRedoStack = [];
 
   editor.value = "";
   sourceEditorText = "";
@@ -498,24 +504,38 @@ function updateNumericOrderingButton(parseResult) {
   numericOrderingBtn.style.display = shouldShow ? "" : "none";
 }
 
+function isEpicxTimestampLine(line) {
+  return /^\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}(?:\s*-->\s*\d{2}:\d{2}(?::\d{2})?\.\d{3})?\s*$/.test(line);
+}
+
 function resyncEpicxEntryIndexes(source, entries) {
   if (!entries || entries.length === 0) return source;
 
   const lines = source.replace(/\r\n/g, "\n").split("\n");
 
-  for (let i = 0; i < entries.length; i += 1) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     const targetIndex = (entry.loc?.startLine ?? 0) - 1;
+
     if (targetIndex < 0 || targetIndex >= lines.length) continue;
 
     const existing = lines[targetIndex] || "";
-    const leading = existing.match(/^\s*/)?.[0] || "";
-    const trailing = existing.match(/\s*$/)?.[0] || "";
 
-    lines[targetIndex] = `${leading}${i + 1}${trailing}`;
+    if (/^\s*\d+\s*$/.test(existing)) {
+      const leading = existing.match(/^\s*/)?.[0] || "";
+      const trailing = existing.match(/\s*$/)?.[0] || "";
+      lines[targetIndex] = `${leading}${i + 1}${trailing}`;
+      continue;
+    }
+
+    if (isEpicxTimestampLine(existing)) {
+      lines.splice(targetIndex, 0, String(i + 1));
+    }
   }
 
-  return lines.join("\n");
+  return lines
+    .join("\n")
+    .replace(/\n{3,}(?=\d+\n\d{2}:\d{2}(?::\d{2})?\.\d{3})/g, "\n\n");
 }
 
 numericOrderingBtn?.addEventListener("mousedown", (event) => {
@@ -650,7 +670,7 @@ function renderMetadataEditForm(metadata) {
             <div id="albumArtPlaceholder" style="opacity:0.8; display: ${existingArtBase64 ? "none" : "none"}; width:240px; height:240px; background:#f3f3f3; align-items:center; justify-content:center;">No album art</div>
 
             <!-- overlay icon buttons in top-right -->
-            <div id="albumArtIcons" style="position:absolute; top:6px; right:6px; display:${existingArtBase64 ? "flex" : "none"}; gap:6px;">
+            <div id="albumArtIcons" style="position:absolute; top:34px; right:6px; display:${existingArtBase64 ? "flex" : "none"}; gap:6px;">
               <button type="button" id="uploadAlbumArtIconBtn" title="Upload/Replace" style="width:32px;height:32px;border-radius:4px;background:rgba(0,0,0,0.6);color:#fff;border:0;display:flex;align-items:center;justify-content:center;">
                 <svg class="icon edit-mini-icon" viewBox="0 0 628 628" aria-hidden="true" style="width:18px;height:18px;">
                   <use href="icons.svg#edit-mini-icon"></use>
@@ -702,7 +722,12 @@ function renderMetadataEditForm(metadata) {
       ${albumArtEditorHtml}
 
       <div class="metadata-actions">
-        <button type="submit">Save Metadata</button>
+        <button type="submit">
+          <svg class="icon store-icon">
+            <use href="icons.svg#store-icon"></use>
+          </svg>
+          Store Metadata
+        </button>
         <button type="button" id="cancelMetadataEditBtn">Cancel</button>
       </div>
     </form>
@@ -861,7 +886,10 @@ async function addAlbumArt() {
       return;
     }
 
-    currentFilePath = result.filePath;
+    if (result.filePath) {
+      currentFilePath = result.filePath;
+    }
+
     currentMetadata = result.metadata;
     metadataEditMode = false;
 
@@ -956,20 +984,44 @@ editor.addEventListener("input", () => {
 
 editor.addEventListener("keydown", (event) => {
 
-  if ((event.metaKey || event.ctrlKey) &&
-    event.key.toLowerCase() === "z") {
+  const isUndo =
+  (event.metaKey || event.ctrlKey) &&
+  !event.shiftKey &&
+  event.key.toLowerCase() === "z";
 
+  const isRedo =
+    (event.metaKey || event.ctrlKey) &&
+    (
+      (event.shiftKey && event.key.toLowerCase() === "z") ||
+      event.key.toLowerCase() === "y"
+    );
+
+  if (isUndo) {
     const snapshot = manualUndoStack.pop();
 
     if (snapshot) {
       event.preventDefault();
-
-      applyEditorSnapshot(snapshot);
+      const redoSnapshot = applyEditorSnapshot(snapshot, "historyUndo");
+      manualRedoStack.push(redoSnapshot);
 
       scheduleEpicValidation();
       saveSessionState();
       updateHeaderState();
+      return;
+    }
+  }
 
+  if (isRedo) {
+    const snapshot = manualRedoStack.pop();
+
+    if (snapshot) {
+      event.preventDefault();
+      const undoSnapshot = applyEditorSnapshot(snapshot, "historyRedo");
+      manualUndoStack.push(undoSnapshot);
+
+      scheduleEpicValidation();
+      saveSessionState();
+      updateHeaderState();
       return;
     }
   }
@@ -1000,12 +1052,15 @@ openBtn.addEventListener("click", async () => {
     if (!result) return;
 
     manualUndoStack = [];
+    manualRedoStack = [];
 
     if (hadExistingSession) {
       resetSession();
     }
 
-    currentFilePath = result.filePath;
+    if (result.filePath) {
+      currentFilePath = result.filePath;
+    }
 
     if (result.kind === "text") {
       editor.value = result.text || "";
@@ -1205,6 +1260,10 @@ async function performSave() {
 
 saveBtn.addEventListener("click", performSave);
 
+addAlbumArtBtn?.addEventListener("click", () => {
+  addAlbumArt();
+});
+
 window.addEventListener("keydown", (ev) => {
   if ((ev.metaKey || ev.ctrlKey) && ev.key === "s") {
     ev.preventDefault();
@@ -1215,9 +1274,14 @@ window.addEventListener("keydown", (ev) => {
 editor.addEventListener("beforeinput", () => {
   if (isApplyingUndo) return;
 
+  const scrollTop = editor.scrollTop;
+
   pushUndoSnapshot();
+
+  requestAnimationFrame(() => {
+    editor.scrollTop = scrollTop;
+  });
 });
 
 restoreSessionState();
 updateHeaderState();
-lastEditorSnapshot = captureEditorSnapshot();
