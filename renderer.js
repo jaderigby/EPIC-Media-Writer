@@ -15,6 +15,11 @@ const audioLinkInfo = document.getElementById("audioLinkInfo");
 const unlinkAudioBtn = document.getElementById("unlinkAudioBtn");
 const numericOrderingBtn = document.getElementById("numericOrderingBtn");
 
+const tocToggleBtn = document.getElementById("tocToggleBtn");
+const tocDrawer = document.getElementById("tocDrawer");
+const tocCloseBtn = document.getElementById("tocCloseBtn");
+const tocList = document.getElementById("tocList");
+
 if (numericOrderingBtn) {
   numericOrderingBtn.style.display = "none";
 }
@@ -46,6 +51,31 @@ let manualRedoStack = [];
 let isApplyingUndo = false;
 
 const MAX_UNDO_SNAPSHOTS = 100;
+
+function getTocGroupKey(sectionIdentity) {
+  const match = String(sectionIdentity || "").match(/^\[\s*([^{}\]]+)/);
+  return match ? match[1].trim() : sectionIdentity;
+}
+
+function groupSectionTocEntries(entries) {
+  const groups = [];
+
+  entries.forEach((entry) => {
+    const groupKey = getTocGroupKey(entry.label);
+    const lastGroup = groups[groups.length - 1];
+
+    if (lastGroup && lastGroup.groupKey === groupKey) {
+      lastGroup.entries.push(entry);
+    } else {
+      groups.push({
+        groupKey,
+        entries: [entry]
+      });
+    }
+  });
+
+  return groups;
+}
 
 function pushUndoSnapshot() {
   manualUndoStack.push(captureEditorSnapshot());
@@ -117,7 +147,7 @@ function syncEditorHighlight() {
   if (!editorHighlight) return;
 
   editorHighlight.innerHTML =
-    renderEpicHighlight(editor.value) + "\n";
+    renderEpicHighlight(editor.value) + "\n ";
 
   editorHighlight.scrollTop = editor.scrollTop;
   editorHighlight.scrollLeft = editor.scrollLeft;
@@ -145,7 +175,7 @@ function commitGhostHeader() {
   const stub = getHeaderStub();
 
   editor.value = stub;
-  syncEditorHighlight();
+  refreshEditorView();
 
   sourceEditorText = "";
 
@@ -166,6 +196,27 @@ function commitGhostHeader() {
 
 function hasUnsavedChanges() {
   return editor.value !== sourceEditorText;
+}
+
+let highlightSyncFrame = null;
+
+function requestEditorHighlightSync() {
+  if (highlightSyncFrame) {
+    cancelAnimationFrame(highlightSyncFrame);
+  }
+
+  highlightSyncFrame = requestAnimationFrame(() => {
+    highlightSyncFrame = null;
+    syncEditorHighlight();
+  });
+}
+
+function refreshEditorView() {
+  requestEditorHighlightSync();
+
+  if (tocDrawer?.classList.contains("open")) {
+    renderSectionToc();
+  }
 }
 
 async function confirmDiscardUnsavedChanges() {
@@ -452,7 +503,7 @@ function restoreSessionState() {
 
     currentFilePath = state.currentFilePath || "";
     editor.value = state.editorText || "";
-    syncEditorHighlight();
+    refreshEditorView();
 
     filePathEl.textContent =
       currentFilePath
@@ -495,7 +546,7 @@ function resetSession() {
   manualRedoStack = [];
 
   editor.value = "";
-  syncEditorHighlight();
+  refreshEditorView();
 
   sourceEditorText = "";
   sourceHadContent = false;
@@ -865,13 +916,177 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function highlightInstructionBlocks(text) {
+function highlightEntryNumbers(text) {
   return text.replace(
-    /\{\{([\s\S]*?)\}\}/g,
-    (_, inner) => {
-      return `<span class="epic-instruction">{{${inner}}}</span>`;
+    /(^|\n\n)(\d+)(\n\d{2}:\d{2}(?::\d{2})?\.\d{3})/g,
+    (_, prefix, number, timestamp) =>
+      `${prefix}<span class="epic-entry-number">${number}</span>${timestamp}`
+  );
+}
+
+function highlightTimestamps(text) {
+  return text.replace(
+    /\b(\d{2}:\d{2}(?::\d{2})?\.\d{3})(\s*-->\s*(\d{2}:\d{2}(?::\d{2})?\.\d{3}))?/g,
+    (match, start, rangePart = "") => {
+      if (rangePart) {
+        return `<span class="epic-time-range"><span class="epic-time">${start}</span>${rangePart.replace(
+          /(\d{2}:\d{2}(?::\d{2})?\.\d{3})/,
+          '<span class="epic-time">$1</span>'
+        )}</span>`;
+      }
+
+      return `<span class="epic-time">${start}</span>`;
     }
   );
+}
+
+function getSectionTocEntries(source) {
+  const lines = String(source || "").split("\n");
+  const entries = [];
+
+  let previousSectionIdentity = "";
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+
+    if (!/^\[[^\]]+\]$/.test(trimmed)) return;
+
+    const sectionIdentity = trimmed;
+
+    if (sectionIdentity === previousSectionIdentity) {
+      return;
+    }
+
+    previousSectionIdentity = sectionIdentity;
+
+    entries.push({
+      label: sectionIdentity,
+      lineIndex: index
+    });
+  });
+
+  return entries;
+}
+
+function getOffsetForLine(source, lineIndex) {
+  const lines = String(source || "").split("\n");
+  let offset = 0;
+
+  for (let i = 0; i < lineIndex; i += 1) {
+    offset += lines[i].length + 1;
+  }
+
+  return offset;
+}
+
+function renderSectionToc() {
+  if (!tocList) return;
+
+  const entries = getSectionTocEntries(editor.value);
+
+  if (!entries.length) {
+    tocList.innerHTML = `<div class="toc-empty">No sections found.</div>`;
+    return;
+  }
+
+  const groups = groupSectionTocEntries(entries);
+
+  tocList.innerHTML = groups.map((group) => {
+    const items = group.entries.map((entry) => `
+      <button
+        class="toc-item"
+        type="button"
+        data-line-index="${entry.lineIndex}"
+        title="${escapeHtml(entry.label)}"
+      >
+        <span class="toc-item-label">
+          ${formatTocLabel(entry.label)}
+        </span>
+      </button>
+    `).join("");
+
+    return group.entries.length > 1
+      ? `<div class="toc-group">${items}</div>`
+      : items;
+  }).join("");
+
+  tocList.querySelectorAll(".toc-item").forEach((button) => {
+    button.addEventListener("click", () => {
+      const lineIndex = Number(button.dataset.lineIndex);
+      const offset = getOffsetForLine(editor.value, lineIndex);
+
+      editor.focus();
+      editor.setSelectionRange(offset, offset);
+
+      const lineHeight =
+        parseFloat(getComputedStyle(editor).lineHeight) || 20;
+
+      editor.scrollTop =
+        Math.max(0, lineIndex * lineHeight - 40);
+
+      refreshEditorView();
+    });
+  });
+}
+
+function formatTocLabel(sectionIdentity) {
+  return escapeHtml(sectionIdentity).replace(
+    /^(\[)(.*?)(\{\{.*?\}\})?(])$/,
+    (_, open, title, instruction = "", close) => {
+      const instructionHtml = instruction
+        ? instruction.replace(
+            /^(\{\{)(.*?)(\}\})$/,
+            `<span class="toc-item-decorator">$1</span>$2<span class="toc-item-decorator">$3</span>`
+          )
+        : "";
+
+      return `<span class="toc-item-decorator">${open}</span>${title}${instructionHtml}<span class="toc-item-decorator">${close}</span>`;
+    }
+  );
+}
+
+function highlightInstructionBlocks(text) {
+  return text.replace(
+    /\{\{([^{}]*?)\}\}/g,
+    (_, inner) => {
+      const cssClass = inner.trim().startsWith("&}")
+        ? "epic-freeform-notation"
+        : "epic-instruction";
+
+      return `<span class="${cssClass}">{{${inner}}}</span>`;
+    }
+  );
+}
+
+function highlightMarkdownInline(text) {
+  return text
+    .replace(
+      /`([^`]+)`/g,
+      '<span class="md-marker">`</span><span class="md-inline-code">$1</span><span class="md-marker">`</span>'
+    )
+    .replace(
+      /(!?)\[([^\]]*)\]\(([^)]+)\)/g,
+      (_, bang, label, target) => {
+        if (bang) {
+          return `<span class="md-image-ref"><span class="md-marker">![</span><span class="md-image-label">${label}</span><span class="md-marker">](</span><span class="md-image-target">${target}</span><span class="md-marker">)</span></span>`;
+        }
+
+        return `<span class="md-link-ref"><span class="md-marker">[</span><span class="md-link-label">${label}</span><span class="md-marker">](</span><span class="md-link-target">${target}</span><span class="md-marker">)</span></span>`;
+      }
+    )
+    .replace(
+      /\*\*([^*]+)\*\*/g,
+      '<span class="md-marker">**</span><span class="md-bold">$1</span><span class="md-marker">**</span>'
+    )
+    .replace(
+      /(?<!\*)\*([^*\n]+)\*(?!\*)/g,
+      '<span class="md-marker">*</span><span class="md-italic">$1</span><span class="md-marker">*</span>'
+    );
+}
+
+function isMarkdownListLine(rawLine) {
+  return /^\s*(-|\*|\+)\s+\S/.test(rawLine) ||
+    /^\s*\d+\.\s+\S/.test(rawLine);
 }
 
 function isEpicxEntryIndexLine(rawLine) {
@@ -888,12 +1103,40 @@ function renderEpicHighlight(value) {
   let fenceCount = 0;
   let inHeader = false;
   let inEpicxEntry = false;
+  let activeBlockClass = "";
 
   const rendered = lines.map((rawLine, index) => {
     const escaped = escapeHtml(rawLine);
-    const highlighted =
-      highlightInstructionBlocks(escaped);
+    const previousLine = lines[index - 1] || "";
+
+    const isEntryNumberLine =
+      isEpicxEntryIndexLine(rawLine) &&
+      isEpicxTimeLine(lines[index + 1] || "") &&
+      (
+        index === 0 ||
+        previousLine.trim().length === 0
+      );
+
+    let highlighted =
+      highlightTimestamps(
+        highlightInstructionBlocks(
+          highlightMarkdownInline(escaped)
+        )
+      );
+
+    if (isEntryNumberLine) {
+      highlighted =
+        `<span class="epic-entry-number">${highlighted}</span>`;
+    }
     const trimmed = rawLine.trim();
+
+    const startsMultilineBlock =
+      trimmed.startsWith("{{") &&
+      !trimmed.includes("}}");
+
+    const endsMultilineBlock =
+      activeBlockClass &&
+      trimmed.endsWith("}}");
 
     let lineHtml = highlighted;
 
@@ -913,6 +1156,21 @@ function renderEpicHighlight(value) {
       lineHtml = `<span class="epic-section">${highlighted}</span>`;
     }
 
+    if (startsMultilineBlock) {
+      activeBlockClass = trimmed.startsWith("{{&}")
+        ? "epic-freeform-notation"
+        : "epic-instruction";
+    }
+
+    if (activeBlockClass) {
+      lineHtml =
+        `<span class="${activeBlockClass}">${highlighted}</span>`;
+    }
+
+    if (endsMultilineBlock) {
+      activeBlockClass = "";
+    }
+
     const nextLine = lines[index + 1] || "";
     const startsEpicxEntry =
       isEpicxEntryIndexLine(rawLine) &&
@@ -922,6 +1180,10 @@ function renderEpicHighlight(value) {
       trimmed.length === 0;
 
     let output = "";
+
+    if (!inHeader && isMarkdownListLine(rawLine)) {
+      lineHtml = `<span class="md-list-line">${lineHtml}</span>`;
+    }
 
     if (startsEpicxEntry) {
       if (inEpicxEntry) {
@@ -1126,6 +1388,9 @@ editor.addEventListener("focus", showGhostHeaderIfAppropriate);
 editor.addEventListener("blur", showGhostHeaderIfAppropriate);
 
 editor.addEventListener("input", () => {
+  if (tocDrawer?.classList.contains("open")) {
+    renderSectionToc();
+  }
   showGhostHeaderIfAppropriate();
   rememberAuthorKeyCorrection();
 });
@@ -1214,7 +1479,7 @@ openBtn.addEventListener("click", async () => {
 
     if (result.kind === "text") {
       editor.value = result.text || "";
-      syncEditorHighlight();
+      refreshEditorView();
 
       sourceEditorText = editor.value;
       sourceHadContent =
@@ -1241,7 +1506,7 @@ openBtn.addEventListener("click", async () => {
     }
 
     editor.value = result.epicx || "";
-    syncEditorHighlight();
+    refreshEditorView();
     
     sourceEditorText = editor.value;
     sourceHadContent =
@@ -1272,6 +1537,21 @@ openBtn.addEventListener("click", async () => {
     console.error(err);
     statusEl.textContent = `Open failed:\n${err.message || err}`;
   }
+});
+
+tocToggleBtn?.addEventListener("click", () => {
+  const willOpen =
+    !tocDrawer?.classList.contains("open");
+
+  if (willOpen) {
+    renderSectionToc();
+  }
+
+  tocDrawer?.classList.toggle("open", willOpen);
+});
+
+tocCloseBtn?.addEventListener("click", () => {
+  tocDrawer?.classList.remove("open");
 });
 
 storeAudioBtn?.addEventListener("click", async () => {
@@ -1325,7 +1605,7 @@ storeAudioBtn?.addEventListener("click", async () => {
       metadataEditMode = false;
 
       editor.value = result.epicx || "";
-      syncEditorHighlight();
+      refreshEditorView();
 
       sourceEditorText = editor.value;
       sourceHadContent =
@@ -1484,14 +1764,13 @@ window.addEventListener("keydown", (ev) => {
   }
 });
 
-editor.addEventListener("input", syncEditorHighlight);
+editor.addEventListener("input", requestEditorHighlightSync);
+editor.addEventListener("keyup", requestEditorHighlightSync);
+editor.addEventListener("mouseup", requestEditorHighlightSync);
+editor.addEventListener("click", requestEditorHighlightSync);
+editor.addEventListener("select", requestEditorHighlightSync);
 
-editor.addEventListener("scroll", () => {
-  if (!editorHighlight) return;
-
-  editorHighlight.scrollTop = editor.scrollTop;
-  editorHighlight.scrollLeft = editor.scrollLeft;
-});
+editor.addEventListener("scroll", requestEditorHighlightSync);
 
 editor.addEventListener("beforeinput", () => {
   if (isApplyingUndo) return;

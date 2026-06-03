@@ -121,7 +121,7 @@
       flex: 1 1 auto;
       min-height: 0;
       display: grid;
-      grid-template-columns: 1fr 320px;
+      grid-template-columns: 1fr 370px;
       overflow: hidden;
     }
 
@@ -160,9 +160,7 @@
 
     aside {
       min-height: 0;
-      /* border-left: 1px solid #333;
-      background: #181818; */
-      padding: 16px;
+      padding: 16px 30px 16px 16px;
       overflow: auto;
     }
 
@@ -500,7 +498,7 @@
       position: fixed;
       right: 15px;
       bottom: 0;
-      width: 320px;
+      width: 370px;
       z-index: 20;
 
       display: flex;
@@ -699,6 +697,316 @@
       margin-top: 18px;
     }
 
+
+
+
+
+
+    .epic-time {
+      color: #8fe6c8;
+      font-weight: 600;
+    }
+
+    .epic-time-range {
+      color: #67aa98;
+    }
+
+    .epic-entry-number {
+      color: #95aec9; /*  7aa7d8, c98452, 46c279, c67d48, 95aec9 */
+      font-weight: 700;
+    }
+
+
+
+
+
+
+
+
+    .md-bold {
+      font-weight: 700;
+    }
+
+    /* .md-italic {
+      font-style: italic;
+    } */
+
+    .md-link {
+      color: #b3e2d6; /* aed4e7, 9cc4d8, c39fd6, 9fd6c8, c8a5da, cdacde */
+    }
+
+    .md-image {
+      color: #cdacde;
+    }
+
+    .md-inline-code {
+      color: #b9e6b0;
+      background: rgb(255 255 255 / 6%);
+      border-radius: 4px;
+    }
+
+    .md-list-line {
+      margin: 0 -0.4rem;
+      padding: 0 0.4rem;
+      color: #f3d9b8;
+      /* background: rgba(44, 50, 55, 0.6); */
+      /* border-radius: 4px; */
+    }
+
+    .md-marker {
+      opacity: 0.44;
+    }
+
+    /*======== md links ========*/
+    .md-link-ref .md-marker {
+      color: #b3e2d6;
+    }
+    .md-link-label {
+      color: #b3e2d6; /* 86d7ff, b3e2d6 */
+    }
+    .md-link-ref .md-link-target {
+      color: #9fd6c8;
+      opacity: 0.65;
+    }
+
+     /*======== md images ========*/
+    .md-image-ref .md-marker {
+      color: #cdacde;
+    }
+    .md-image-ref .md-image-target {
+      color: #cdacde;
+      opacity: 0.65;
+    }
+    .md-image-label {
+      color: #cdacde; /* 86d7ff, b3e2d6 */
+    }
+
+    /* .md-reference-target {
+      color: #b1d2f4;
+      opacity: 0.65;
+    } */
+
+    .md-inline-code {
+      color: #b9e6b0;
+      background: rgb(255 255 255 / 6%);
+      border-radius: 4px;
+    }
+
+    .md-bold {
+      font-weight: 700;
+    }
+
+    .md-italic {
+      font-style: italic;
+    }
+
+
+
+
+
+
+
+
+
+    .toc-drawer {
+      position: fixed;
+      top: 82px;
+      right: 0;
+      bottom: 0;
+      width: 354px;
+      z-index: 900;
+
+      transform: translateX(340px);
+      transition: transform 180ms ease;
+    }
+
+    .toc-drawer.open {
+      transform: translateX(0);
+    }
+
+    .toc-panel {
+      height: 100%;
+      background: #0d2235;
+      border-left: 1px solid var(--blackberry-dk-blue-border);
+      box-shadow: -18px 0 40px rgb(0 0 0 / 40%);
+      overflow: auto;
+    }
+
+    .toc-tab {
+      position: absolute;
+      padding: 0;
+      left: -26px;
+      top: 80px;
+
+      width: 26px;
+      height: 110px;
+
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+
+      border: 1px solid #293e52;
+      border-left: 0;
+      border-radius: 0 6px 6px 0;
+
+      background: #293e52;
+      color: #d9f7ff;
+      letter-spacing: 0.13rem;
+
+      cursor: pointer;
+    }
+
+    .toc-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .toc-list {
+      margin-top: 14px;
+    }
+
+    /* TOC hotlink gaps */
+    .toc-item {
+      margin: 0 0 17px;
+    }
+    .toc-item:last-child {
+      margin-bottom: 0;
+    }
+    /* TOC hotlink theme styling */
+    .toc-item {
+      background: #225b89;
+      background: linear-gradient(180deg, #225b89, #144277);
+      border: 1px solid #1e68a1;
+    }
+
+    .toc-item {
+      display: block;
+      width: 100px;
+      text-align: left;
+      padding: 10px 12px;
+      color: #eef3f8;
+      font-size: 0.78rem;
+      letter-spacing: 0.05rem;
+      word-spacing: 0.08rem;
+      cursor: pointer;
+      font-weight: 600;
+      border-radius: 8px;
+      /* transition: all 0.15s ease-in-out; */
+    }
+
+    .toc-item:hover {
+      --border-size: 3px;
+      border: var(--border-size) solid #277cbe;
+      /* transform: translate((var(--border-size) / 2), (var(--border-size) / 2)); */
+      padding: calc(10px - (var(--border-size) / 2)) calc(12px - (var(--border-size) / 2));
+      background: #184970;
+      background: linear-gradient(180deg, #184970, #0e3159);
+    }
+
+    .toc-item-decorator {
+      display: inline-block;
+      padding: 0 0.15rem;
+      opacity: 0.5;
+      vertical-align: 6%;
+    }
+
+    .toc-empty {
+      color: rgb(238 243 248 / 65%);
+    }
+
+    .toc-drawer {
+      position: fixed;
+      top: 82px;
+      right: 0;
+      bottom: 0;
+      width: 375px;
+      z-index: 900;
+
+      padding: 0;
+      overflow: visible;
+      background: transparent;
+      border-left: 0;
+
+      transform: translateX(375px);
+      transition: transform 180ms ease;
+    }
+
+
+
+
+
+    .toc-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      overflow: hidden;
+    }
+
+    .toc-item-label {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+
+
+
+
+    .toc-item + .toc-group {
+      margin-top: 30px;
+    }
+
+    .toc-group {
+      margin-left: -15px;
+      margin-right: -15px;
+      padding: 15px;
+      background: rgba(0, 0, 0, 0.27);
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      margin-bottom: 30px;
+    }
+
+    .toc-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .toc-panel {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .toc-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+
+      flex: 0 0 auto;
+      padding: 26px 16px 12px;
+
+      background: #0d2235;
+    }
+
+    .toc-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      margin-top: 0;
+      padding-top: 8px;
+      padding: 8px 16px 26px;
+    }
+
+    .epic-freeform-notation:first-child {
+      font-style: normal;
+    }
+
+    .epic-freeform-notation {
+      color: rgb(197 150 219);
+      /* font-style: italic; */
+    }
+
     </style>
   </head>
   <body>
@@ -761,6 +1069,20 @@
 
       <div id="metadataPanel">No file loaded</div>
       <button id="addAlbumArtBtn" title="Add or replace album art">Add Album Art</button>
+    </aside>
+    <aside id="tocDrawer" class="toc-drawer">
+      <button id="tocToggleBtn" class="toc-tab" type="button">
+        Sections
+      </button>
+
+      <div class="toc-panel">
+        <div class="toc-header">
+          <h2>Sections</h2>
+          <button id="tocCloseBtn" type="button">×</button>
+        </div>
+
+        <div id="tocList" class="toc-list"></div>
+      </div>
     </aside>
   </main>
 
