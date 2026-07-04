@@ -25,7 +25,7 @@ if (numericOrderingBtn) {
 }
 
 function isSavedTextProject() {
-  return /\.(epic|epicx)$/i.test(currentFilePath || "");
+  return /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");
 }
 
 function setEditMetadataBtnIcon(active) {
@@ -1047,13 +1047,13 @@ function formatTocLabel(sectionIdentity) {
 
 function highlightInstructionBlocks(text) {
   return text.replace(
-    /\{\{([^{}]*?)\}\}/g,
-    (_, inner) => {
-      const cssClass = inner.trim().startsWith("&}")
+    /\{\{&\}([^{}]*?)\}\}|\{\{([^{}]*?)\}\}/g,
+    (match, freeformInner) => {
+      const cssClass = freeformInner !== undefined
         ? "epic-freeform-notation"
         : "epic-instruction";
 
-      return `<span class="${cssClass}">{{${inner}}}</span>`;
+      return `<span class="${cssClass}">${match}</span>`;
     }
   );
 }
@@ -1097,12 +1097,17 @@ function isEpicxTimeLine(rawLine) {
   return /^\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}(?:\s*-->\s*\d{2}:\d{2}(?::\d{2})?\.\d{3})?\s*$/.test(rawLine);
 }
 
+function isFreeflowSectionLine(rawLine) {
+  return /^\s*\[\s*\{&\}[\s\S]*\]\s*$/.test(rawLine);
+}
+
 function renderEpicHighlight(value) {
   const lines = String(value).split("\n");
 
   let fenceCount = 0;
   let inHeader = false;
   let inEpicxEntry = false;
+  let inFreeflowSection = false;
   let activeBlockClass = "";
 
   const rendered = lines.map((rawLine, index) => {
@@ -1138,9 +1143,19 @@ function renderEpicHighlight(value) {
       activeBlockClass &&
       trimmed.endsWith("}}");
 
+    const startsFreeflowSection =
+      !inHeader &&
+      isFreeflowSectionLine(rawLine);
+
+    const endsFreeflowSection =
+      inFreeflowSection &&
+      trimmed === ":::";
+
     let lineHtml = highlighted;
 
-    if (trimmed === "---") {
+    if (inFreeflowSection) {
+      lineHtml = `<span class="epic-freeflow-section">${highlighted}</span>`;
+    } else if (trimmed === "---") {
       fenceCount += 1;
 
       inHeader = fenceCount === 1;
@@ -1156,6 +1171,10 @@ function renderEpicHighlight(value) {
       lineHtml = `<span class="epic-section">${highlighted}</span>`;
     }
 
+    if (startsFreeflowSection) {
+      inFreeflowSection = true;
+    }
+
     if (startsMultilineBlock) {
       activeBlockClass = trimmed.startsWith("{{&}")
         ? "epic-freeform-notation"
@@ -1169,6 +1188,10 @@ function renderEpicHighlight(value) {
 
     if (endsMultilineBlock) {
       activeBlockClass = "";
+    }
+
+    if (endsFreeflowSection) {
+      inFreeflowSection = false;
     }
 
     const nextLine = lines[index + 1] || "";
@@ -1662,8 +1685,7 @@ async function performSave() {
   try {
     statusEl.textContent = "Saving...";
 
-    const isTextFile =
-      /\.(epic|epicx)$/i.test(currentFilePath || "");
+    const isTextFile = /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");
 
     if (isTextFile) {
       const result = await window.EpicInspector.saveText({

@@ -638,7 +638,14 @@ ipcMain.handle("open-media", async () => {
     filters: [
       {
         name: "EPIC Files",
-        extensions: ["epic", "epicx", "wav", "mp3"]
+        extensions: [
+          "epic", 
+          "epicx",
+          "txt",
+          "md", 
+          "wav", 
+          "mp3"
+        ]
       }
     ]
   });
@@ -648,7 +655,7 @@ ipcMain.handle("open-media", async () => {
   const filePath = result.filePaths[0];
   const ext = path.extname(filePath).toLowerCase();
 
-  if (ext === ".epic" || ext === ".epicx") {
+  if (ext === ".epic" || ext === ".epicx" || ext === ".txt" || ext === ".md") {
     const text = await fs.readFile(filePath, "utf8");
 
     return {
