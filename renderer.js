@@ -1151,10 +1151,20 @@ function renderEpicHighlight(value) {
       inFreeflowSection &&
       trimmed === ":::";
 
+    const isFreeflowSectionContent =
+      inFreeflowSection ||
+      startsFreeflowSection;
+
     let lineHtml = highlighted;
 
-    if (inFreeflowSection) {
-      lineHtml = `<span class="epic-freeflow-section">${highlighted}</span>`;
+    if (isFreeflowSectionContent) {
+      const freeflowClass = startsFreeflowSection
+        ? "epic-freeflow-section epic-freeflow-opener"
+        : endsFreeflowSection
+          ? "epic-freeflow-section epic-freeflow-closer"
+          : "epic-freeflow-section";
+
+      lineHtml = `<span class="${freeflowClass}">${highlighted}</span>`;
     } else if (trimmed === "---") {
       fenceCount += 1;
 
@@ -1181,7 +1191,7 @@ function renderEpicHighlight(value) {
         : "epic-instruction";
     }
 
-    if (activeBlockClass) {
+    if (activeBlockClass && !isFreeflowSectionContent) {
       lineHtml =
         `<span class="${activeBlockClass}">${highlighted}</span>`;
     }
@@ -1217,6 +1227,10 @@ function renderEpicHighlight(value) {
       inEpicxEntry = true;
     }
 
+    if (startsFreeflowSection) {
+      output += `<span class="epic-freeflow-block">`;
+    }
+
     if (inEpicxEntry && isBlank) {
       output += `${lineHtml}</span>`;
       inEpicxEntry = false;
@@ -1225,12 +1239,24 @@ function renderEpicHighlight(value) {
 
     output += lineHtml;
 
+    if (endsFreeflowSection) {
+      output += `</span>`;
+    }
+
     return output;
   }).join("\n");
 
-  return inEpicxEntry
-    ? `${rendered}</span>`
-    : rendered;
+  let output = rendered;
+
+  if (inEpicxEntry) {
+    output += `</span>`;
+  }
+
+  if (inFreeflowSection) {
+    output += `</span>`;
+  }
+
+  return output;
 }
 
 function getCurrentAudioPath() {
