@@ -748,6 +748,13 @@ function applyStudioTimingSnapshot(snapshot) {
   return { applied: true };
 }
 
+async function autoSaveStudioTimingIfClean(wasCleanBeforeTiming) {
+  if (!wasCleanBeforeTiming || !isSavedEpicxProject()) return false;
+
+  await saveCurrentTextFile({ updateLinkedAudio: false });
+  return true;
+}
+
 async function linkStudioTiming() {
   if (!isSavedEpicxProject()) return;
 
@@ -784,11 +791,22 @@ async function linkStudioTiming() {
     return;
   }
 
+  const wasCleanBeforeTiming = !hasUnsavedChanges();
   const result = applyStudioTimingSnapshot(payload);
 
   if (!result.applied && !result.unchanged) {
     statusEl.textContent = result.reason;
     return;
+  }
+
+  if (result.applied) {
+    try {
+      await autoSaveStudioTimingIfClean(wasCleanBeforeTiming);
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = `Studio timing applied, but auto-save failed:\n${err.message || err}`;
+      return;
+    }
   }
 
   studioTimingLink = {
@@ -857,11 +875,22 @@ async function syncStudioTimingFromStudio({ quiet = false } = {}) {
       return;
     }
 
+    const wasCleanBeforeTiming = !hasUnsavedChanges();
     const result = applyStudioTimingSnapshot(payload);
 
     if (!result.applied && !result.unchanged) {
       statusEl.textContent = result.reason;
       return;
+    }
+
+    if (result.applied) {
+      try {
+        await autoSaveStudioTimingIfClean(wasCleanBeforeTiming);
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = `Studio timing applied, but auto-save failed:\n${err.message || err}`;
+        return;
+      }
     }
 
     studioTimingLink = {
@@ -871,7 +900,7 @@ async function syncStudioTimingFromStudio({ quiet = false } = {}) {
       waiting: false
     };
 
-    if (result.applied) {
+    if (result.applied && !wasCleanBeforeTiming) {
       statusEl.textContent = "Applied EPIC Studio timing update.";
     }
 
@@ -2163,6 +2192,36 @@ unlinkAudioBtn?.addEventListener("click", () => {
   updateHeaderState();
 });
 
+async function saveCurrentTextFile({ updateLinkedAudio = true } = {}) {
+  const result = await window.EpicInspector.saveText({
+    filePath: currentFilePath,
+    text: editor.value
+  });
+
+  sourceEditorText = editor.value;
+  sourceHadContent =
+    editor.value.trim().length > 0;
+
+  if (updateLinkedAudio && linkedAudioPath) {
+    const audioResult =
+      await window.EpicInspector.storeInAudio({
+        targetPath: linkedAudioPath,
+        epicx: editor.value,
+        projectLabel:
+          getDisplayName(currentFilePath) ||
+          "Current project"
+      });
+
+    currentMetadata = audioResult.metadata;
+    renderMetadata(currentMetadata);
+  }
+
+  saveSessionState();
+  updateHeaderState();
+
+  return result;
+}
+
 async function performSave() {
   try {
     statusEl.textContent = "Saving...";
@@ -2170,36 +2229,13 @@ async function performSave() {
     const isTextFile = /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");
 
     if (isTextFile) {
-      const result = await window.EpicInspector.saveText({
-        filePath: currentFilePath,
-        text: editor.value
-      });
-
-      sourceEditorText = editor.value;
-      sourceHadContent =
-        editor.value.trim().length > 0;
-
-      if (linkedAudioPath) {
-        const audioResult =
-          await window.EpicInspector.storeInAudio({
-            targetPath: linkedAudioPath,
-            epicx: editor.value,
-            projectLabel:
-              getDisplayName(currentFilePath) ||
-              "Current project"
-          });
-
-        currentMetadata = audioResult.metadata;
-        renderMetadata(currentMetadata);
-      }
+      const result = await saveCurrentTextFile();
 
       statusEl.textContent =
         linkedAudioPath
           ? `Saved text and updated audio:\n${getDisplayName(result.filePath)} ↔ ${getDisplayName(linkedAudioPath)}`
           : `Saved text file:\n${getDisplayName(result.filePath)}`;
 
-      saveSessionState();
-      updateHeaderState();
       return;
     }
 
