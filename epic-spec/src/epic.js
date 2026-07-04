@@ -1,9 +1,9 @@
 import { findTrailingInstruction, parseInstructionBlock, stringifyInstructionBlock } from "./instruction.js";
 import { parseSectionLine, stringifySection } from "./section.js";
-import { makeIssue } from "./utils.js";
 
 export function parseEpicBody(cursor) {
   const issues = [];
+  const preamble = [];
   const sections = [];
   let currentSection = null;
 
@@ -28,18 +28,17 @@ export function parseEpicBody(cursor) {
       continue;
     }
 
-    if (!currentSection) {
-      issues.push(makeIssue("LYRIC_OUTSIDE_SECTION", "Lyric or instruction line found before any section.", lineNumber));
-      cursor.next();
-      continue;
-    }
-
     const parsedLine = parseEpicLine(cursor.next(), lineNumber);
     issues.push(...parsedLine.issues);
-    currentSection.lines.push(parsedLine.node);
+
+    if (currentSection) {
+      currentSection.lines.push(parsedLine.node);
+    } else {
+      preamble.push(parsedLine.node);
+    }
   }
 
-  return { body: { type: "EpicBody", sections }, issues };
+  return { body: { type: "EpicBody", preamble, sections }, issues };
 }
 
 function parseEpicLine(raw, line) {
@@ -81,19 +80,32 @@ function parseEpicLine(raw, line) {
 
 export function stringifyEpicBody(body) {
   const lines = [];
+
+  for (const line of body.preamble || []) {
+    lines.push(stringifyEpicLine(line));
+  }
+
+  if ((body.preamble || []).length > 0 && (body.sections || []).length > 0) {
+    lines.push("");
+  }
+
   for (const section of body.sections || []) {
     lines.push(stringifySection(section.section));
     for (const line of section.lines || []) {
-      if (line.type === "EpicInstructionLine") {
-        lines.push(stringifyInstructionBlock(line.instruction));
-      } else {
-        let text = line.text || "";
-        if (line.instruction) text += (text ? " " : "") + stringifyInstructionBlock(line.instruction);
-        lines.push(text);
-      }
+      lines.push(stringifyEpicLine(line));
     }
     lines.push("");
   }
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n");
+}
+
+function stringifyEpicLine(line) {
+  if (line.type === "EpicInstructionLine") {
+    return stringifyInstructionBlock(line.instruction);
+  }
+
+  let text = line.text || "";
+  if (line.instruction) text += (text ? " " : "") + stringifyInstructionBlock(line.instruction);
+  return text;
 }

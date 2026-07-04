@@ -319,6 +319,117 @@ function moveToNextHeaderValue() {
   return false;
 }
 
+function expandFreeflowSectionTrigger() {
+  const text = editor.value;
+  const cursor = editor.selectionStart;
+
+  if (cursor !== editor.selectionEnd) return false;
+  if (text[cursor - 1] !== "&") return false;
+
+  const beforeTrigger = text[cursor - 2] || "";
+
+  if (beforeTrigger && !/\s/.test(beforeTrigger)) return false;
+
+  const replacement = "[{&}]";
+  const triggerStart = cursor - 1;
+  const cursorTarget = triggerStart + 4;
+  const scrollTop = editor.scrollTop;
+
+  pushUndoSnapshot();
+
+  editor.value =
+    text.slice(0, triggerStart) +
+    replacement +
+    text.slice(cursor);
+
+  editor.focus();
+  editor.setSelectionRange(cursorTarget, cursorTarget);
+  editor.scrollTop = scrollTop;
+
+  editor.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType: "insertReplacementText"
+  }));
+
+  return true;
+}
+
+function moveOutOfFreeflowSectionOpener() {
+  const text = editor.value;
+  const cursor = editor.selectionStart;
+
+  if (cursor !== editor.selectionEnd) return false;
+  if (text[cursor] !== "]") return false;
+
+  const lineStart = text.lastIndexOf("\n", cursor - 1) + 1;
+  const openerPrefix = text.slice(lineStart, cursor);
+
+  if (!/^\s*\[\{&\}/.test(openerPrefix)) return false;
+
+  const afterCloser = cursor + 1;
+
+  if (text[afterCloser] === "\n") {
+    editor.focus();
+    editor.setSelectionRange(afterCloser + 1, afterCloser + 1);
+    return true;
+  }
+
+  const scrollTop = editor.scrollTop;
+
+  pushUndoSnapshot();
+
+  editor.value =
+    text.slice(0, afterCloser) +
+    "\n" +
+    text.slice(afterCloser);
+
+  editor.focus();
+  editor.setSelectionRange(afterCloser + 1, afterCloser + 1);
+  editor.scrollTop = scrollTop;
+
+  editor.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType: "insertLineBreak"
+  }));
+
+  return true;
+}
+
+function insertFreeflowSectionCloser() {
+  const text = editor.value;
+  const selectionStart = editor.selectionStart;
+  const selectionEnd = editor.selectionEnd;
+  const selectedText = text.slice(selectionStart, selectionEnd);
+  const lineStart = text.lastIndexOf("\n", selectionStart - 1) + 1;
+  const linePrefix = text.slice(lineStart, selectionStart);
+  const needsLeadingNewline =
+    selectionStart === selectionEnd &&
+    linePrefix.trim().length > 0;
+  const replacement = `${needsLeadingNewline ? "\n" : ""}:::\n`;
+  const cursorTarget = selectionStart + replacement.length;
+  const scrollTop = editor.scrollTop;
+
+  pushUndoSnapshot();
+
+  editor.value =
+    text.slice(0, selectionStart) +
+    replacement +
+    text.slice(selectionEnd);
+
+  editor.focus();
+  editor.setSelectionRange(cursorTarget, cursorTarget);
+  editor.scrollTop = scrollTop;
+
+  editor.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType: selectedText
+      ? "insertReplacementText"
+      : "insertText"
+  }));
+
+  return true;
+}
+
 function showConfirmModal({
   title = "Confirm",
   message,
@@ -1458,6 +1569,11 @@ editor.addEventListener("keydown", (event) => {
       event.key.toLowerCase() === "y"
     );
 
+  const isFreeflowCloserShortcut =
+    (event.metaKey || event.ctrlKey) &&
+    event.shiftKey &&
+    (event.key === ":" || event.code === "Semicolon");
+
   if (isUndo) {
     const snapshot = manualUndoStack.pop();
 
@@ -1488,6 +1604,12 @@ editor.addEventListener("keydown", (event) => {
     }
   }
 
+  if (isFreeflowCloserShortcut) {
+    event.preventDefault();
+    insertFreeflowSectionCloser();
+    return;
+  }
+
   if (
     ghostHeaderVisible &&
     (event.key === "Enter" || event.key === "Tab")
@@ -1498,6 +1620,16 @@ editor.addEventListener("keydown", (event) => {
   }
 
   if (event.key === "Tab") {
+    if (expandFreeflowSectionTrigger()) {
+      event.preventDefault();
+      return;
+    }
+
+    if (moveOutOfFreeflowSectionOpener()) {
+      event.preventDefault();
+      return;
+    }
+
     if (moveToNextHeaderValue()) {
       event.preventDefault();
     }
