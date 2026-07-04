@@ -8,5 +8,17 @@ contextBridge.exposeInMainWorld("EpicInspector", {
   saveTextAs: (payload) => ipcRenderer.invoke("save-text-as", payload),
   saveText: (payload) => ipcRenderer.invoke("save-text", payload),
   storeInAudio: (payload) => ipcRenderer.invoke("store-in-audio", payload),
-  addAlbumArt: (payload) => ipcRenderer.invoke("add-album-art", payload)
+  addAlbumArt: (payload) => ipcRenderer.invoke("add-album-art", payload),
+  updateStudioTimingMenuState: (payload) =>
+    ipcRenderer.invoke("studio-timing:update-menu-state", payload),
+  getStudioTimingSnapshot: () =>
+    ipcRenderer.invoke("studio-timing:get-snapshot"),
+  onStudioTimingMenuAction: (handler) => {
+    if (typeof handler !== "function") return;
+
+    ipcRenderer.removeAllListeners("studio-timing:menu-action");
+    ipcRenderer.on("studio-timing:menu-action", () => {
+      handler();
+    });
+  }
 });

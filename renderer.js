@@ -28,6 +28,10 @@ function isSavedTextProject() {
   return /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");
 }
 
+function isSavedEpicxProject() {
+  return /\.epicx$/i.test(currentFilePath || "");
+}
+
 function setEditMetadataBtnIcon(active) {
   if (!editMetadataBtn) return;
   editMetadataBtn.innerHTML = `
@@ -46,6 +50,9 @@ let lastEpicValidationResult = null;
 let sourceEditorText = "";
 let sourceHadContent = false;
 let linkedAudioPath = "";
+let studioTimingLink = null;
+let studioTimingPollTimer = null;
+let isStudioTimingSyncInProgress = false;
 let manualUndoStack = [];
 let manualRedoStack = [];
 let isApplyingUndo = false;
@@ -570,11 +577,318 @@ function updateHeaderState() {
     shouldShowSession ? "" : "none";
   
   updateSidebarState();
+  updateStudioTimingMenuState();
 }
 
 function getDisplayName(filePath) {
   if (!filePath) return "No file loaded";
   return String(filePath).split(/[\\/]/).pop();
+}
+
+function updateStudioTimingMenuState() {
+  const isAvailable = isSavedEpicxProject();
+
+  if (!isAvailable && studioTimingLink) {
+    studioTimingLink = null;
+    stopStudioTimingPolling();
+  }
+
+  window.EpicInspector?.updateStudioTimingMenuState?.({
+    available: isAvailable,
+    linked: Boolean(studioTimingLink)
+  });
+}
+
+function unlinkStudioTiming({ silent = false } = {}) {
+  studioTimingLink = null;
+  stopStudioTimingPolling();
+
+  if (!silent) {
+    statusEl.textContent = "Studio timing unlinked.";
+  }
+
+  saveSessionState();
+  updateStudioTimingMenuState();
+}
+
+async function refreshEpicValidationResult() {
+  if (!window.EpicInspector?.parseEpic) return null;
+
+  const result = await window.EpicInspector.parseEpic({
+    source: editor.value
+  });
+
+  lastEpicValidationResult = result;
+  updateNumericOrderingButton(result);
+  return result;
+}
+
+function getStudioTimingSnapshotPayload(response) {
+  if (!response) return null;
+  if (Array.isArray(response.entries)) return response;
+  if (Array.isArray(response.snapshot?.entries)) return response.snapshot;
+  return null;
+}
+
+function hasStudioTimingContextChanged(snapshot) {
+  if (studioTimingLink?.contextRevision == null) return false;
+
+  const nextRevision = snapshot?.context?.contextRevision ?? null;
+  return nextRevision !== null &&
+    nextRevision !== studioTimingLink.contextRevision;
+}
+
+function startStudioTimingPolling() {
+  stopStudioTimingPolling();
+
+  studioTimingPollTimer = window.setInterval(() => {
+    syncStudioTimingFromStudio({ quiet: true });
+  }, 1200);
+}
+
+function stopStudioTimingPolling() {
+  if (!studioTimingPollTimer) return;
+
+  window.clearInterval(studioTimingPollTimer);
+  studioTimingPollTimer = null;
+}
+
+function applyStudioTimingSnapshot(snapshot) {
+  const entries = Array.isArray(snapshot?.entries)
+    ? snapshot.entries
+    : [];
+
+  const parsedEntries =
+    lastEpicValidationResult?.document?.format === "epicx"
+      ? lastEpicValidationResult.document.body?.entries || []
+      : [];
+
+  if (!entries.length || !parsedEntries.length) {
+    return {
+      applied: false,
+      reason: "No EPICX entries available for timing sync."
+    };
+  }
+
+  if (entries.length !== parsedEntries.length) {
+    return {
+      applied: false,
+      reason: "Studio timing could not be applied because entry counts do not match."
+    };
+  }
+
+  const lines = editor.value.replace(/\r\n/g, "\n").split("\n");
+
+  for (let index = 0; index < parsedEntries.length; index += 1) {
+    const parsedEntry = parsedEntries[index];
+    const studioEntry = entries[index];
+
+    if (Number(studioEntry.index) !== index + 1) {
+      return {
+        applied: false,
+        reason: "Studio timing could not be applied because entry indexes do not match."
+      };
+    }
+
+    const entryLineIndex = (parsedEntry.loc?.startLine ?? 0) - 1;
+    const timingLineIndex = entryLineIndex + 1;
+
+    if (!isEpicxTimestampLine(lines[timingLineIndex] || "")) {
+      return {
+        applied: false,
+        reason: `Studio timing could not be applied because entry ${index + 1} has no timing line.`
+      };
+    }
+  }
+
+  const nextLines = [...lines];
+
+  for (let index = 0; index < parsedEntries.length; index += 1) {
+    const parsedEntry = parsedEntries[index];
+    const studioEntry = entries[index];
+    const timingLine = String(studioEntry.timingLine || "").trim();
+    const timingLineIndex = ((parsedEntry.loc?.startLine ?? 0) - 1) + 1;
+
+    if (!isEpicxTimestampLine(timingLine)) {
+      return {
+        applied: false,
+        reason: `Studio timing for entry ${index + 1} is invalid.`
+      };
+    }
+
+    nextLines[timingLineIndex] = timingLine;
+  }
+
+  const nextText = nextLines.join("\n");
+
+  if (nextText === editor.value) {
+    return {
+      applied: false,
+      unchanged: true,
+      reason: "Studio timing is already current."
+    };
+  }
+
+  const selectionStart = editor.selectionStart;
+  const selectionEnd = editor.selectionEnd;
+  const scrollTop = editor.scrollTop;
+
+  replaceEditorTextWithManualUndo(nextText);
+
+  editor.setSelectionRange(
+    Math.min(selectionStart, nextText.length),
+    Math.min(selectionEnd, nextText.length)
+  );
+  editor.scrollTop = scrollTop;
+
+  scheduleEpicValidation();
+  updateHeaderState();
+  saveSessionState();
+
+  return { applied: true };
+}
+
+async function linkStudioTiming() {
+  if (!isSavedEpicxProject()) return;
+
+  let parseResult = null;
+
+  try {
+    parseResult = await refreshEpicValidationResult();
+  } catch (err) {
+    statusEl.textContent = `Studio timing link failed:\n${err.message || err}`;
+    return;
+  }
+
+  if (parseResult?.document?.format !== "epicx") {
+    statusEl.textContent = "Studio timing link requires a valid EPICX document.";
+    return;
+  }
+
+  const snapshot = await window.EpicInspector?.getStudioTimingSnapshot?.();
+  const payload = getStudioTimingSnapshotPayload(snapshot);
+
+  if (!payload) {
+    studioTimingLink = {
+      contextRevision: null,
+      timingFingerprint: "",
+      linkedAt: new Date().toISOString(),
+      waiting: true
+    };
+
+    statusEl.textContent =
+      "Linked EPICX (Studio) timing; waiting for EPIC Studio.";
+    startStudioTimingPolling();
+    saveSessionState();
+    updateStudioTimingMenuState();
+    return;
+  }
+
+  const result = applyStudioTimingSnapshot(payload);
+
+  if (!result.applied && !result.unchanged) {
+    statusEl.textContent = result.reason;
+    return;
+  }
+
+  studioTimingLink = {
+    contextRevision: payload?.context?.contextRevision ?? null,
+    timingFingerprint: payload?.timingFingerprint || "",
+    linkedAt: new Date().toISOString(),
+    waiting: false
+  };
+
+  statusEl.textContent = result.applied
+    ? "Linked EPICX (Studio) timing and applied current timing."
+    : "Linked EPICX (Studio) timing.";
+
+  startStudioTimingPolling();
+  saveSessionState();
+  updateStudioTimingMenuState();
+}
+
+async function syncStudioTimingFromStudio({ quiet = false } = {}) {
+  if (!studioTimingLink || isStudioTimingSyncInProgress) return;
+
+  isStudioTimingSyncInProgress = true;
+
+  try {
+    const snapshot = await window.EpicInspector?.getStudioTimingSnapshot?.();
+    const payload = getStudioTimingSnapshotPayload(snapshot);
+
+    if (!payload) {
+      if (!quiet) {
+        statusEl.textContent =
+          snapshot?.message ||
+          "EPIC Studio timing is not available.";
+      }
+      return;
+    }
+
+    if (hasStudioTimingContextChanged(payload)) {
+      studioTimingLink = null;
+      stopStudioTimingPolling();
+      statusEl.textContent =
+        "Studio timing unlinked because EPIC Studio changed projects.";
+      saveSessionState();
+      updateStudioTimingMenuState();
+      return;
+    }
+
+    if (
+      !studioTimingLink.waiting &&
+      payload.timingFingerprint &&
+      payload.timingFingerprint === studioTimingLink.timingFingerprint
+    ) {
+      return;
+    }
+
+    try {
+      const parseResult = await refreshEpicValidationResult();
+
+      if (parseResult?.document?.format !== "epicx") {
+        statusEl.textContent =
+          "Studio timing sync paused because the document is no longer valid EPICX.";
+        return;
+      }
+    } catch (err) {
+      statusEl.textContent =
+        `Studio timing sync paused:\n${err.message || err}`;
+      return;
+    }
+
+    const result = applyStudioTimingSnapshot(payload);
+
+    if (!result.applied && !result.unchanged) {
+      statusEl.textContent = result.reason;
+      return;
+    }
+
+    studioTimingLink = {
+      ...studioTimingLink,
+      contextRevision: payload?.context?.contextRevision ?? null,
+      timingFingerprint: payload?.timingFingerprint || "",
+      waiting: false
+    };
+
+    if (result.applied) {
+      statusEl.textContent = "Applied EPIC Studio timing update.";
+    }
+
+    saveSessionState();
+    updateStudioTimingMenuState();
+  } finally {
+    isStudioTimingSyncInProgress = false;
+  }
+}
+
+function handleStudioTimingMenuAction() {
+  if (studioTimingLink) {
+    unlinkStudioTiming();
+    return;
+  }
+
+  linkStudioTiming();
 }
 
 function saveSessionState() {
@@ -588,6 +902,7 @@ function saveSessionState() {
     validationText: validationStatusEl.textContent,
     sourceEditorText,
     linkedAudioPath,
+    studioTimingLink,
     sourceHadContent,
     savedAt: new Date().toISOString()
   };
@@ -605,6 +920,7 @@ function restoreSessionState() {
 
     const state = JSON.parse(raw);
     linkedAudioPath = state.linkedAudioPath || "";
+    studioTimingLink = state.studioTimingLink || null;
 
     sourceHadContent = Boolean(state.sourceHadContent);
 
@@ -641,6 +957,11 @@ function restoreSessionState() {
       scheduleEpicValidation();
     }
     updateHeaderState();
+    updateStudioTimingMenuState();
+
+    if (studioTimingLink && isSavedEpicxProject()) {
+      startStudioTimingPolling();
+    }
   } catch (err) {
     console.warn("Failed to restore session:", err);
   } finally {
@@ -665,6 +986,8 @@ function resetSession() {
   filePathEl.textContent = "No file loaded";
 
   linkedAudioPath = "";
+  studioTimingLink = null;
+  stopStudioTimingPolling();
 
   statusEl.textContent = "Idle";
 
@@ -682,6 +1005,7 @@ function resetSession() {
 
   localStorage.removeItem(SESSION_KEY);
   updateHeaderState();
+  updateStudioTimingMenuState();
   showGhostHeaderIfAppropriate();
 }
 
@@ -1965,4 +2289,5 @@ editor.addEventListener("beforeinput", () => {
 });
 
 restoreSessionState();
+window.EpicInspector?.onStudioTimingMenuAction?.(handleStudioTimingMenuAction);
 updateHeaderState();

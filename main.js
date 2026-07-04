@@ -1,8 +1,18 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require("electron");
 const { parseEpicText } = require("./lib/epic-parser");
 const path = require("path");
 
 const fs = require("fs/promises");
+
+let mainWindowRef = null;
+let studioTimingMenuState = {
+  available: false,
+  linked: false
+};
+
+const STUDIO_TIMING_BRIDGE_URL =
+  process.env.EPIC_STUDIO_TIMING_URL ||
+  "http://127.0.0.1:48731/media-writer/timing";
 
 const {
   readMp3Metadata,
@@ -64,6 +74,152 @@ function previewEpicLines(value, maxLines = 10) {
   }
 
   return lines.join("\n");
+}
+
+function updateStudioTimingMenuState(state = {}) {
+  const nextState = {
+    available: Boolean(state.available),
+    linked: Boolean(state.linked)
+  };
+
+  if (
+    nextState.available === studioTimingMenuState.available &&
+    nextState.linked === studioTimingMenuState.linked
+  ) {
+    return;
+  }
+
+  studioTimingMenuState = nextState;
+
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    createApplicationMenu(mainWindowRef);
+  }
+}
+
+function createApplicationMenu(win) {
+  const isMac = process.platform === "darwin";
+  const template = [];
+
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" }
+      ]
+    });
+  }
+
+  const toolsMenu = studioTimingMenuState.available
+    ? [
+        {
+          label: "Tools",
+          submenu: [
+            {
+              id: "studioTimingLink",
+              label: studioTimingMenuState.linked
+                ? "Unlink EPICX (Studio) Timing"
+                : "Link EPICX (Studio) Timing...",
+              click: () => {
+                win.webContents.send("studio-timing:menu-action");
+              }
+            }
+          ]
+        }
+      ]
+    : [];
+
+  template.push(
+    {
+      label: "File",
+      submenu: [
+        isMac ? { role: "close" } : { role: "quit" }
+      ]
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" }
+      ]
+    },
+    ...toolsMenu,
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" }
+      ]
+    }
+  );
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+async function requestStudioTimingSnapshot() {
+  if (typeof fetch !== "function") {
+    return {
+      ok: false,
+      reason: "unavailable",
+      message: "EPIC Studio timing bridge is not available in this runtime."
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 700);
+
+  try {
+    const response = await fetch(STUDIO_TIMING_BRIDGE_URL, {
+      method: "GET",
+      headers: {
+        Accept: "application/json"
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        reason: "unavailable",
+        message: "EPIC Studio timing bridge is not connected yet."
+      };
+    }
+
+    const snapshot = await response.json();
+
+    return {
+      ok: true,
+      snapshot
+    };
+  } catch {
+    return {
+      ok: false,
+      reason: "unavailable",
+      message: "EPIC Studio timing bridge is not connected yet."
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function confirmReplaceEmbeddedEpic({
@@ -300,6 +456,15 @@ ipcMain.handle("parse-epic", async (_event, payload) => {
   return parseEpicText(payload?.source || "");
 });
 
+ipcMain.handle("studio-timing:update-menu-state", async (_event, state) => {
+  updateStudioTimingMenuState(state);
+  return { ok: true };
+});
+
+ipcMain.handle("studio-timing:get-snapshot", async () => {
+  return await requestStudioTimingSnapshot();
+});
+
 ipcMain.handle("save-metadata", async (_event, payload) => {
   const { filePath, fields, albumArt } = payload;
 
@@ -474,11 +639,20 @@ function createWindow() {
     }
   });
 
+  mainWindowRef = win;
+
+  win.on("closed", () => {
+    if (mainWindowRef === win) {
+      mainWindowRef = null;
+    }
+  });
+
   win.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error("[main] preload-error:", preloadPath);
     console.error(error);
   });
 
+  createApplicationMenu(win);
   win.loadFile(path.join(__dirname, "index.html"));
 }
 
