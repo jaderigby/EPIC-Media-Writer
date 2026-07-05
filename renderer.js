@@ -751,8 +751,20 @@ function applyStudioTimingSnapshot(snapshot) {
 async function autoSaveStudioTimingIfClean(wasCleanBeforeTiming) {
   if (!wasCleanBeforeTiming || !isSavedEpicxProject()) return false;
 
-  await saveCurrentTextFile({ updateLinkedAudio: false });
+  await saveCurrentTextFile({
+    updateLinkedAudio: false,
+    notifyStudio: false
+  });
   return true;
+}
+
+async function notifyStudioOfSavedEpicx() {
+  if (!studioTimingLink || !isSavedEpicxProject()) return;
+
+  await window.EpicInspector?.notifyStudioEpicxSaved?.({
+    filePath: currentFilePath,
+    savedAt: new Date().toISOString()
+  });
 }
 
 async function linkStudioTiming() {
@@ -2192,7 +2204,10 @@ unlinkAudioBtn?.addEventListener("click", () => {
   updateHeaderState();
 });
 
-async function saveCurrentTextFile({ updateLinkedAudio = true } = {}) {
+async function saveCurrentTextFile({
+  updateLinkedAudio = true,
+  notifyStudio = true
+} = {}) {
   const result = await window.EpicInspector.saveText({
     filePath: currentFilePath,
     text: editor.value
@@ -2218,6 +2233,14 @@ async function saveCurrentTextFile({ updateLinkedAudio = true } = {}) {
 
   saveSessionState();
   updateHeaderState();
+
+  if (notifyStudio) {
+    try {
+      await notifyStudioOfSavedEpicx();
+    } catch (err) {
+      console.warn("Studio save notification failed:", err);
+    }
+  }
 
   return result;
 }

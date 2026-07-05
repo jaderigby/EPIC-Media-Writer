@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("EpicInspector", {
     ipcRenderer.invoke("studio-timing:update-menu-state", payload),
   getStudioTimingSnapshot: () =>
     ipcRenderer.invoke("studio-timing:get-snapshot"),
+  notifyStudioEpicxSaved: (payload) =>
+    ipcRenderer.invoke("studio-timing:notify-saved", payload),
   onStudioTimingMenuAction: (handler) => {
     if (typeof handler !== "function") return;
 

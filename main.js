@@ -222,6 +222,59 @@ async function requestStudioTimingSnapshot() {
   }
 }
 
+function getStudioBridgeUrl(pathname) {
+  const url = new URL(STUDIO_TIMING_BRIDGE_URL);
+  url.pathname = pathname;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+async function notifyStudioEpicxSaved(payload = {}) {
+  if (typeof fetch !== "function") {
+    return {
+      ok: false,
+      reason: "unavailable",
+      message: "EPIC Studio bridge is not available in this runtime."
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 700);
+
+  try {
+    const response = await fetch(getStudioBridgeUrl("/media-writer/saved"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        reason: "unavailable",
+        message: "EPIC Studio save bridge is not connected yet."
+      };
+    }
+
+    return await response.json();
+  } catch {
+    return {
+      ok: false,
+      reason: "unavailable",
+      message: "EPIC Studio save bridge is not connected yet."
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function confirmReplaceEmbeddedEpic({
   parentWindow,
   projectText,
@@ -463,6 +516,10 @@ ipcMain.handle("studio-timing:update-menu-state", async (_event, state) => {
 
 ipcMain.handle("studio-timing:get-snapshot", async () => {
   return await requestStudioTimingSnapshot();
+});
+
+ipcMain.handle("studio-timing:notify-saved", async (_event, payload) => {
+  return await notifyStudioEpicxSaved(payload);
 });
 
 ipcMain.handle("save-metadata", async (_event, payload) => {
