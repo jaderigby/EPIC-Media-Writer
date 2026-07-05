@@ -53,6 +53,8 @@ let linkedAudioPath = "";
 let studioTimingLink = null;
 let studioTimingPollTimer = null;
 let isStudioTimingSyncInProgress = false;
+let transientStatusText = "";
+let statusObserver = null;
 let manualUndoStack = [];
 let manualRedoStack = [];
 let isApplyingUndo = false;
@@ -132,6 +134,60 @@ let metadataEditMode = false;
 let stagedAlbumArt = undefined; // undefined = no change, null = remove, object = { mimeType, data }
 
 let parseTimer = null;
+
+const DEFAULT_STATUS_TEXT = "Ready";
+const LINKED_STUDIO_TIMING_STATUS = "Linked EPICX (Studio) timing";
+
+function getPinnedStatusLines() {
+  return studioTimingLink ? [LINKED_STUDIO_TIMING_STATUS] : [];
+}
+
+function stripPinnedStatusText(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .filter((line) => {
+      const normalized = line.trim().replace(/\.$/, "");
+      if (!normalized || normalized === "Idle") return false;
+      return !normalized.startsWith(LINKED_STUDIO_TIMING_STATUS);
+    })
+    .join("\n")
+    .trim();
+}
+
+function renderStatus() {
+  const lines = [
+    ...getPinnedStatusLines(),
+    transientStatusText
+  ].filter((line) => String(line || "").trim().length > 0);
+
+  statusObserver?.disconnect();
+  statusEl.textContent = lines.length
+    ? lines.join("\n")
+    : DEFAULT_STATUS_TEXT;
+  observeStatusChanges();
+}
+
+function setStatus(value) {
+  transientStatusText = stripPinnedStatusText(value);
+  renderStatus();
+}
+
+function observeStatusChanges() {
+  if (!statusObserver) {
+    statusObserver = new MutationObserver(() => {
+      transientStatusText = stripPinnedStatusText(statusEl.textContent);
+      renderStatus();
+    });
+  }
+
+  statusObserver.observe(statusEl, {
+    childList: true,
+    characterData: true,
+    subtree: true
+  });
+}
+
+renderStatus();
 
 function getPreferredAuthorKey() {
   return localStorage.getItem(AUTHOR_KEY_PREF) || "Creator";
@@ -591,6 +647,7 @@ function updateStudioTimingMenuState() {
   if (!isAvailable && studioTimingLink) {
     studioTimingLink = null;
     stopStudioTimingPolling();
+    renderStatus();
   }
 
   window.EpicInspector?.updateStudioTimingMenuState?.({
@@ -939,7 +996,7 @@ function saveSessionState() {
     currentFilePath,
     currentMetadata,
     editorText: editor.value,
-    statusText: statusEl.textContent,
+    statusText: stripPinnedStatusText(statusEl.textContent),
     validationText: validationStatusEl.textContent,
     sourceEditorText,
     linkedAudioPath,
@@ -978,8 +1035,7 @@ function restoreSessionState() {
         ? getDisplayName(currentFilePath)
         : "Unsaved EPIC session";
 
-    statusEl.textContent =
-      state.statusText || "Restored session.";
+    setStatus(state.statusText || "Restored session.");
 
     validationStatusEl.textContent =
       state.validationText || "";
@@ -1030,7 +1086,7 @@ function resetSession() {
   studioTimingLink = null;
   stopStudioTimingPolling();
 
-  statusEl.textContent = "Idle";
+  setStatus("");
 
   validationStatusEl.textContent = "";
 
