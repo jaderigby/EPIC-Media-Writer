@@ -155,6 +155,7 @@ const validationStatusEl =
 
 const SESSION_KEY = "epic-media-inspector-session";
   let restoreInProgress = false;
+let rawMetadataOpen = false;
 
 let currentMetadata = null;
 let metadataEditMode = false;
@@ -1029,6 +1030,7 @@ function saveSessionState() {
     linkedAudioPath,
     studioTimingLink,
     sourceHadContent,
+    rawMetadataOpen,
     savedAt: new Date().toISOString()
   };
 
@@ -1048,6 +1050,7 @@ function restoreSessionState() {
     studioTimingLink = state.studioTimingLink || null;
 
     sourceHadContent = Boolean(state.sourceHadContent);
+    rawMetadataOpen = Boolean(state.rawMetadataOpen);
 
     sourceEditorText = state.sourceEditorText || editor.value;
 
@@ -1097,6 +1100,7 @@ function resetSession() {
   currentFilePath = "";
   currentMetadata = null;
   metadataEditMode = false;
+  rawMetadataOpen = false;
 
   manualUndoStack = [];
   manualRedoStack = [];
@@ -1947,6 +1951,9 @@ function renderMetadata(metadata) {
     ? metadata.albumArt
     : albumArtInfo?.data;
   const albumArtMime = metadata?.albumArtMime || albumArtInfo?.mimeType;
+  const rawMetadataText = isMp3
+    ? id3FrameDetails
+    : wavMetadataDetailText;
 
   const items = isMp3
     ? [
@@ -1959,13 +1966,11 @@ function renderMetadata(metadata) {
         ["Comments", mp3.comment || ""],
         ["ID3 Version", metadata?.id3?.version || ""],
         ["ID3 Frames", metadata?.id3?.frameCount ?? ""],
-        
         ["EPICX", metadata?.epicx ? "Present" : "None"],
         ...(metadata?.epicx
           ? [["EPICX Size", `${metadata.epicx.length} chars`]]
           : []),
-        ["ID3v1", metadata?.id3?.v1Present ? "Present" : ""],
-        ["ID3 Frame Details", id3FrameDetails],
+        ["ID3v1", metadata?.id3?.v1Present ? "Present" : ""]
       ]
     : [
         ["Name", info.INAM || ""],
@@ -1980,8 +1985,7 @@ function renderMetadata(metadata) {
         ...(metadata?.epicx
           ? [["EPICX Size", `${metadata.epicx.length} chars`]]
           : []),
-        ["WAV Chunks", chunks.map(chunk => chunk.id.trim()).join(", ")],
-        ["WAV Metadata Details", wavMetadataDetailText]
+        ["WAV Chunks", chunks.map(chunk => chunk.id.trim()).join(", ")]
       ];
 
   const visibleItems = items.filter(([, value]) => {
@@ -1994,6 +1998,29 @@ function renderMetadata(metadata) {
       <div class="meta-value">${escapeHtml(value)}</div>
     </div>
   `).join("");
+
+  if (String(rawMetadataText || "").trim()) {
+    html += `
+      <div
+        class="meta-item raw-metadata-toggle"
+        role="button"
+        tabindex="0"
+        aria-expanded="false"
+      >
+        <div class="meta-key raw-metadata-title">
+          <span class="raw-metadata-arrow" aria-hidden="true">▶</span>
+          <strong>Raw Metadata</strong>
+        </div>
+        <div class="meta-value"></div>
+      </div>
+      <div
+        class="meta-item raw-metadata-content"
+      >
+        <div class="meta-key"></div>
+        <div class="meta-value" style="white-space: pre-wrap;">${escapeHtml(rawMetadataText)}</div>
+      </div>
+    `;
+  }
 
   // Add album art preview at the bottom if available
   if (
@@ -2027,6 +2054,45 @@ function renderMetadata(metadata) {
   }
 
   metadataPanel.innerHTML = html;
+
+  const rawMetadataToggle = metadataPanel.querySelector(".raw-metadata-toggle");
+  const rawMetadataContent = metadataPanel.querySelector(".raw-metadata-content");
+
+  const setRawMetadataOpen = (isOpen, { persist = true } = {}) => {
+    if (!rawMetadataToggle || !rawMetadataContent) return;
+
+    rawMetadataOpen = Boolean(isOpen);
+
+    rawMetadataToggle.setAttribute("aria-expanded", rawMetadataOpen ? "true" : "false");
+    rawMetadataToggle.classList.toggle("open", rawMetadataOpen);
+    rawMetadataContent.classList.toggle("open", rawMetadataOpen);
+
+    if (persist) {
+      saveSessionState();
+    }
+  };
+
+  const toggleRawMetadata = () => {
+    if (!rawMetadataToggle || !rawMetadataContent) return;
+
+    const nextOpen =
+      rawMetadataToggle.getAttribute("aria-expanded") !== "true";
+
+    setRawMetadataOpen(nextOpen);
+  };
+
+  if (rawMetadataToggle && rawMetadataContent) {
+    setRawMetadataOpen(rawMetadataOpen, { persist: false });
+  }
+
+  rawMetadataToggle?.addEventListener("click", toggleRawMetadata);
+  rawMetadataToggle?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleRawMetadata();
+    }
+  });
+
   wireAlbumArtNormalModeActions();
 }
 

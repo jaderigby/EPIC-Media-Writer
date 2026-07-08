@@ -1051,6 +1051,61 @@
     .epic-freeflow-closer {
       color: #c490dd;
     }
+
+    .raw-metadata-toggle {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .raw-metadata-toggle .raw-metadata-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 0;
+      line-height: 1.2;
+    }
+
+    .raw-metadata-toggle .raw-metadata-title strong {
+      font-weight: 700;
+    }
+
+    .raw-metadata-arrow {
+      flex: 0 0 10px;
+      width: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 400;
+      transform-origin: 50% 50%;
+      transition: transform 180ms ease;
+    }
+
+    .raw-metadata-toggle.open .raw-metadata-arrow {
+      transform: rotate(90deg);
+    }
+
+    .raw-metadata-content {
+      max-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      transform: translateY(-4px);
+      padding-top: 0;
+      padding-bottom: 0;
+      transition:
+        max-height 220ms ease,
+        opacity 180ms ease,
+        transform 220ms ease,
+        padding-top 220ms ease,
+        padding-bottom 220ms ease;
+    }
+
+    .raw-metadata-content.open {
+      max-height: 600px;
+      opacity: 1;
+      transform: translateY(0);
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
     </style>
   </head>
   <body>
