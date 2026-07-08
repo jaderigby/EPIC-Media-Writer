@@ -99,6 +99,10 @@ function updateStudioTimingMenuState(state = {}) {
 function createApplicationMenu(win) {
   const isMac = process.platform === "darwin";
   const template = [];
+  const sendEditorHistoryAction = (action) => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send("editor-history:action", action);
+  };
 
   if (isMac) {
     template.push({
@@ -146,8 +150,16 @@ function createApplicationMenu(win) {
     {
       label: "Edit",
       submenu: [
-        { role: "undo" },
-        { role: "redo" },
+        {
+          label: "Undo",
+          accelerator: "CmdOrCtrl+Z",
+          click: () => sendEditorHistoryAction("undo")
+        },
+        {
+          label: "Redo",
+          accelerator: isMac ? "Shift+CmdOrCtrl+Z" : "Ctrl+Y",
+          click: () => sendEditorHistoryAction("redo")
+        },
         { type: "separator" },
         { role: "cut" },
         { role: "copy" },

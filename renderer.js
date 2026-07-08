@@ -109,18 +109,45 @@ function applyEditorSnapshot(snapshot, inputType = "historyUndo") {
 
   isApplyingUndo = true;
 
-  editor.value = snapshot.value;
-  editor.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
-  editor.scrollTop = snapshot.scrollTop;
+  try {
+    editor.value = snapshot.value;
+    editor.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+    editor.scrollTop = snapshot.scrollTop;
 
-  editor.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType
-  }));
-
-  isApplyingUndo = false;
+    editor.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType
+    }));
+  } finally {
+    isApplyingUndo = false;
+  }
 
   return before;
+}
+
+function applyEditorHistoryAction(action) {
+  if (action === "undo") {
+    const snapshot = manualUndoStack.pop();
+
+    if (!snapshot) return false;
+
+    const redoSnapshot = applyEditorSnapshot(snapshot, "historyUndo");
+    manualRedoStack.push(redoSnapshot);
+  } else if (action === "redo") {
+    const snapshot = manualRedoStack.pop();
+
+    if (!snapshot) return false;
+
+    const undoSnapshot = applyEditorSnapshot(snapshot, "historyRedo");
+    manualUndoStack.push(undoSnapshot);
+  } else {
+    return false;
+  }
+
+  scheduleEpicValidation();
+  saveSessionState();
+  updateHeaderState();
+  return true;
 }
 
 const validationStatusEl =
@@ -1996,31 +2023,15 @@ editor.addEventListener("keydown", (event) => {
     (event.key === ":" || event.code === "Semicolon");
 
   if (isUndo) {
-    const snapshot = manualUndoStack.pop();
-
-    if (snapshot) {
+    if (applyEditorHistoryAction("undo")) {
       event.preventDefault();
-      const redoSnapshot = applyEditorSnapshot(snapshot, "historyUndo");
-      manualRedoStack.push(redoSnapshot);
-
-      scheduleEpicValidation();
-      saveSessionState();
-      updateHeaderState();
       return;
     }
   }
 
   if (isRedo) {
-    const snapshot = manualRedoStack.pop();
-
-    if (snapshot) {
+    if (applyEditorHistoryAction("redo")) {
       event.preventDefault();
-      const undoSnapshot = applyEditorSnapshot(snapshot, "historyRedo");
-      manualUndoStack.push(undoSnapshot);
-
-      scheduleEpicValidation();
-      saveSessionState();
-      updateHeaderState();
       return;
     }
   }
@@ -2391,8 +2402,22 @@ editor.addEventListener("select", requestEditorHighlightSync);
 
 editor.addEventListener("scroll", requestEditorHighlightSync);
 
-editor.addEventListener("beforeinput", () => {
+editor.addEventListener("beforeinput", (event) => {
   if (isApplyingUndo) return;
+
+  if (event.inputType === "historyUndo") {
+    if (applyEditorHistoryAction("undo")) {
+      event.preventDefault();
+    }
+    return;
+  }
+
+  if (event.inputType === "historyRedo") {
+    if (applyEditorHistoryAction("redo")) {
+      event.preventDefault();
+    }
+    return;
+  }
 
   const scrollTop = editor.scrollTop;
 
@@ -2404,5 +2429,14 @@ editor.addEventListener("beforeinput", () => {
 });
 
 restoreSessionState();
+window.EpicInspector?.onEditorHistoryAction?.((action) => {
+  editor.focus();
+
+  if (applyEditorHistoryAction(action)) return;
+
+  if (action === "undo" || action === "redo") {
+    document.execCommand(action);
+  }
+});
 window.EpicInspector?.onStudioTimingMenuAction?.(handleStudioTimingMenuAction);
 updateHeaderState();

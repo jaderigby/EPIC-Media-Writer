@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld("EpicInspector", {
     ipcRenderer.invoke("studio-timing:get-snapshot"),
   notifyStudioEpicxSaved: (payload) =>
     ipcRenderer.invoke("studio-timing:notify-saved", payload),
+  onEditorHistoryAction: (handler) => {
+    if (typeof handler !== "function") return;
+
+    ipcRenderer.removeAllListeners("editor-history:action");
+    ipcRenderer.on("editor-history:action", (_event, action) => {
+      handler(action);
+    });
+  },
   onStudioTimingMenuAction: (handler) => {
     if (typeof handler !== "function") return;
 
