@@ -1891,7 +1891,6 @@ async function removeAlbumArt() {
 
     const result = await window.EpicInspector.saveMetadata({
       filePath: audioPath,
-      fields: {},
       albumArt: null
     });
 

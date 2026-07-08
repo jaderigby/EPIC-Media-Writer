@@ -39,6 +39,34 @@ function getEpicAudioOutputPath(filePath) {
   );
 }
 
+async function requestEpicAudioOutputPath({
+  parentWindow,
+  sourcePath,
+  title = "Save EPIC Audio File"
+}) {
+  const defaultPath = getEpicAudioOutputPath(sourcePath);
+
+  if (defaultPath === sourcePath) {
+    return sourcePath;
+  }
+
+  const ext = path.extname(sourcePath).toLowerCase();
+  const result = await dialog.showSaveDialog(parentWindow, {
+    title,
+    defaultPath,
+    filters: [
+      {
+        name: ext === ".mp3" ? "MP3 Audio" : "WAV Audio",
+        extensions: [ext.replace(/^\./, "")]
+      }
+    ]
+  });
+
+  if (result.canceled) return null;
+
+  return result.filePath;
+}
+
 async function writeStandardMetadata(filePath, fields) {
   const kind = getMediaKind(filePath);
 
@@ -61,6 +89,20 @@ async function writeStandardMetadata(filePath, fields) {
   }
 
   throw new Error(`Unsupported media type: ${kind}`);
+}
+
+function hasStandardMetadataFields(fields) {
+  if (!fields || typeof fields !== "object") return false;
+
+  return [
+    "title",
+    "artist",
+    "album",
+    "track",
+    "year",
+    "genre",
+    "comment"
+  ].some(field => Object.prototype.hasOwnProperty.call(fields, field));
 }
 
 function previewEpicLines(value, maxLines = 10) {
@@ -540,20 +582,21 @@ ipcMain.handle("save-metadata", async (_event, payload) => {
   // Read original to preserve EPICX if present
   const original = await readMediaMetadata(filePath);
 
-  await writeStandardMetadata(filePath, fields);
+  if (hasStandardMetadataFields(fields)) {
+    await writeStandardMetadata(filePath, fields);
+  }
 
   if (albumArt !== undefined) {
     const epicx = String(original.epicx || "");
-    const outputPath = getEpicAudioOutputPath(filePath);
 
     await writeMediaArtworkToOutput({
       sourceAudioPath: filePath,
-      outputPath,
+      outputPath: filePath,
       albumArt,
       epicx
     });
 
-    const metadata = await readMediaMetadata(outputPath);
+    const metadata = await readMediaMetadata(filePath);
 
     return {
       metadata,
@@ -634,8 +677,18 @@ ipcMain.handle("store-in-audio", async (event, payload) => {
     }
   }
 
-  const outputPath =
-    getEpicAudioOutputPath(targetPath);
+  const parentWindow =
+    BrowserWindow.fromWebContents(event.sender);
+
+  const outputPath = await requestEpicAudioOutputPath({
+    parentWindow,
+    sourcePath: targetPath,
+    title: "Store EPIC Audio File"
+  });
+
+  if (!outputPath) {
+    return null;
+  }
 
   await writeMediaMetadataToOutput({
     sourceAudioPath: targetPath,
@@ -921,10 +974,21 @@ ipcMain.handle("open-media", async () => {
   };
 });
 
-ipcMain.handle("save-media", async (_event, payload) => {
+ipcMain.handle("save-media", async (event, payload) => {
   const { filePath, epicx } = payload;
 
-  const outputPath = getEpicAudioOutputPath(filePath);
+  const parentWindow =
+    BrowserWindow.fromWebContents(event.sender);
+
+  const outputPath = await requestEpicAudioOutputPath({
+    parentWindow,
+    sourcePath: filePath,
+    title: "Save EPIC Audio File"
+  });
+
+  if (!outputPath) {
+    return null;
+  }
 
   await writeMediaMetadataToOutput({
     sourceAudioPath: filePath,
@@ -973,11 +1037,10 @@ ipcMain.handle("add-album-art", async (_event, payload) => {
 
   const metadata = await readMediaMetadata(audioPath);
   const epicx = String(metadata.epicx || "");
-  const outputPath = getEpicAudioOutputPath(audioPath);
 
   await writeMediaArtworkToOutput({
     sourceAudioPath: audioPath,
-    outputPath,
+    outputPath: audioPath,
     albumArt: {
       mimeType,
       data: imageBuffer.toString("base64")
@@ -985,10 +1048,10 @@ ipcMain.handle("add-album-art", async (_event, payload) => {
     epicx
   });
 
-  const newMetadata = await readMediaMetadata(outputPath);
+  const newMetadata = await readMediaMetadata(audioPath);
 
   return {
-    filePath: outputPath,
+    filePath: audioPath,
     metadata: newMetadata
   };
 });
