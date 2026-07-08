@@ -1354,8 +1354,60 @@ function getStandardFields(metadata) {
   };
 }
 
+function getEditableId3Fields(metadata) {
+  if (metadata?.format !== "mp3") return [];
+
+  return Array.isArray(metadata?.editableId3Frames)
+    ? metadata.editableId3Frames
+    : [];
+}
+
+function renderEditableId3Fields(metadata) {
+  const editableFrames = getEditableId3Fields(metadata);
+
+  if (!editableFrames.length) return "";
+
+  const controls = editableFrames.map((frame, index) => {
+    const fieldId = `editableId3Frame_${index}`;
+    const value = String(frame?.value || "");
+
+    return `
+      <label for="${fieldId}">
+        ${escapeHtml(frame?.label || frame?.id || "ID3 Frame")}
+        <textarea
+          id="${fieldId}"
+          data-id3-frame-key="${escapeHtml(frame?.key || "")}"
+          data-id3-frame-id="${escapeHtml(frame?.id || "")}"
+          data-id3-frame-type="${escapeHtml(frame?.type || "")}"
+          data-id3-frame-description="${escapeHtml(frame?.description || "")}"
+        >${escapeHtml(value)}</textarea>
+      </label>
+    `;
+  }).join("");
+
+  return `
+    <fieldset class="metadata-fieldset">
+      <legend>Advanced ID3 Metadata</legend>
+      ${controls}
+    </fieldset>
+  `;
+}
+
+function getEditableId3FormFields(form) {
+  return Array.from(form.querySelectorAll("[data-id3-frame-key]"))
+    .map(control => ({
+      key: control.dataset.id3FrameKey || "",
+      id: control.dataset.id3FrameId || "",
+      type: control.dataset.id3FrameType || "",
+      description: control.dataset.id3FrameDescription || "",
+      value: String(control.value || "")
+    }))
+    .filter(frame => frame.key || frame.id);
+}
+
 function renderMetadataEditForm(metadata) {
   const fields = getStandardFields(metadata);
+  const editableId3Fields = renderEditableId3Fields(metadata);
 
   metadataPanel.innerHTML = `
     <form id="metadataEditForm" class="metadata-form">
@@ -1386,6 +1438,8 @@ function renderMetadataEditForm(metadata) {
       <label>Comments
         <textarea name="comment">${escapeHtml(fields.comment)}</textarea>
       </label>
+
+      ${editableId3Fields}
 
       <div class="metadata-actions">
         <button type="submit">
@@ -1420,6 +1474,11 @@ function renderMetadataEditForm(metadata) {
       genre: String(form.get("genre") || ""),
       comment: String(form.get("comment") || "")
     };
+    const editableId3Frames = getEditableId3FormFields(e.currentTarget);
+
+    if (editableId3Frames.length) {
+      fields.id3Frames = editableId3Frames;
+    }
 
     try {
       statusEl.textContent = "Saving metadata...";
