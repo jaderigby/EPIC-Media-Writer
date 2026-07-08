@@ -1911,7 +1911,37 @@ function renderMetadata(metadata) {
   const isMp3 = metadata?.format === "mp3";
   const info = metadata?.listInfo || {};
   const mp3 = metadata?.mp3Tags || {};
+  const id3Frames = Array.isArray(metadata?.id3Frames)
+    ? metadata.id3Frames
+    : [];
+  const id3FrameDetails = id3Frames
+    .map(frame => {
+      const label = String(frame?.label || frame?.id || "").trim();
+      const value = String(frame?.value || "").trim();
+
+      if (!label && !value) return "";
+      if (!value) return label;
+
+      return `${label}: ${value}`;
+    })
+    .filter(Boolean)
+    .join("\n");
   const chunks = metadata?.wavChunks || [];
+  const wavMetadataDetails = Array.isArray(metadata?.wavMetadataDetails)
+    ? metadata.wavMetadataDetails
+    : [];
+  const wavMetadataDetailText = wavMetadataDetails
+    .map(detail => {
+      const label = String(detail?.label || "").trim();
+      const value = String(detail?.value || "").trim();
+
+      if (!label && !value) return "";
+      if (!value) return label;
+
+      return `${label}: ${value}`;
+    })
+    .filter(Boolean)
+    .join("\n");
   const albumArtInfo = metadata?.albumArtInfo;
   const albumArtBase64 = typeof metadata?.albumArt === "string"
     ? metadata.albumArt
@@ -1926,11 +1956,16 @@ function renderMetadata(metadata) {
         ["Track Number", mp3.track || ""],
         ["Year", mp3.year || ""],
         ["Genre", mp3.genre || ""],
+        ["Comments", mp3.comment || ""],
         ["ID3 Version", metadata?.id3?.version || ""],
         ["ID3 Frames", metadata?.id3?.frameCount ?? ""],
-        ["EPICX", metadata?.epicx ? "Present" : "Missing"],
-        ["EPICX Frame", metadata?.epicxFrame || "TXXX:EPICX"],
-        ["EPICX Size", `${String(metadata?.epicx || "").length} chars`]
+        
+        ["EPICX", metadata?.epicx ? "Present" : "None"],
+        ...(metadata?.epicx
+          ? [["EPICX Size", `${metadata.epicx.length} chars`]]
+          : []),
+        ["ID3v1", metadata?.id3?.v1Present ? "Present" : ""],
+        ["ID3 Frame Details", id3FrameDetails],
       ]
     : [
         ["Name", info.INAM || ""],
@@ -1941,9 +1976,12 @@ function renderMetadata(metadata) {
         ["Genre", info.IGNR || ""],
         ["Comments", info.ICMT || ""],
         ["Software", info.ISFT || ""],
-        ["EPICX", metadata?.epicx ? "Present" : "Missing"],
-        ["EPICX Size", `${String(metadata?.epicx || "").length} chars`],
-        ["WAV Chunks", chunks.map(chunk => chunk.id.trim()).join(", ")]
+        ["EPICX", metadata?.epicx ? "Present" : "None"],
+        ...(metadata?.epicx
+          ? [["EPICX Size", `${metadata.epicx.length} chars`]]
+          : []),
+        ["WAV Chunks", chunks.map(chunk => chunk.id.trim()).join(", ")],
+        ["WAV Metadata Details", wavMetadataDetailText]
       ];
 
   const visibleItems = items.filter(([, value]) => {
@@ -2138,10 +2176,13 @@ openBtn.addEventListener("click", async () => {
     filePathEl.textContent = getDisplayName(currentFilePath);
     saveBtn.disabled = false;
 
-    statusEl.textContent =
-      `Loaded media\n` +
-      `EPICX found: ${result.epicx ? "yes" : "no — ready to create"}\n` +
-      `EPICX length: ${(result.epicx || "").length} chars`;
+    if (result.epicx) {
+      statusEl.textContent =
+        `Loaded media\n` +
+        `EPICX size: ${result.epicx.length} chars`;
+    } else {
+      statusEl.textContent = "Loaded media";
+    }
 
     saveSessionState();
     updateHeaderState();
