@@ -2,7 +2,8 @@
   "name": "epic-media-writer",
   "productName": "EPIC Media Writer",
   "version": "1.0.0",
-  "description": "A lightweight writing environment for EPIC media scripts and embedded audio workflows.",
+  "author": "Jade C. Rigby",
+  "description": "A light - but powerful - writing environment for authoring EPIC media and inspecting audio file metadata properties.",
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
