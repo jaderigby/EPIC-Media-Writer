@@ -1380,6 +1380,7 @@ function renderEditableId3Fields(metadata) {
           data-id3-frame-id="${escapeHtml(frame?.id || "")}"
           data-id3-frame-type="${escapeHtml(frame?.type || "")}"
           data-id3-frame-description="${escapeHtml(frame?.description || "")}"
+          data-id3-frame-language="${escapeHtml(frame?.language || "")}"
         >${escapeHtml(value)}</textarea>
       </label>
     `;
@@ -1400,6 +1401,7 @@ function getEditableId3FormFields(form) {
       id: control.dataset.id3FrameId || "",
       type: control.dataset.id3FrameType || "",
       description: control.dataset.id3FrameDescription || "",
+      language: control.dataset.id3FrameLanguage || "",
       value: String(control.value || "")
     }))
     .filter(frame => frame.key || frame.id);
