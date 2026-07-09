@@ -188,15 +188,17 @@
     }
 
     .sidebar-title-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 12px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: end;
+      column-gap: 8px;
+      margin-bottom: 10px;
+      border-bottom: 1px solid #444;
     }
 
     .sidebar-title-row h2 {
       margin: 0;
+      padding-bottom: 8px;
     }
 
     .icon-btn {
@@ -218,6 +220,12 @@
       opacity: 0.85;
     }
 
+    .metadata-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
     .metadata-form input,
     .metadata-form textarea {
       width: 100%;
@@ -231,6 +239,56 @@
     .metadata-form textarea {
       min-height: 70px;
       resize: vertical;
+    }
+
+    .metadata-tabs {
+      display: flex;
+      gap: 6px;
+      margin: 0;
+      align-self: stretch;
+      align-items: flex-end;
+    }
+
+    .metadata-tab {
+      padding: 6px 10px;
+      border: 1px solid transparent;
+      border-bottom: 0;
+      background: transparent;
+      color: inherit;
+      opacity: 0.72;
+    }
+
+    .metadata-tab.active {
+      border-color: #444;
+      background: #030303;
+      opacity: 1;
+    }
+
+    #metadataHeaderTabs {
+      display: grid;
+      align-items: flex-end;
+      justify-items: end;
+      min-width: 0;
+    }
+
+    .legacy-metadata-actions {
+      display: none;
+    }
+
+    .metadata-tab-panel[hidden] {
+      display: none;
+    }
+
+    .metadata-tab-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .standard-metadata-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: -3px;
     }
 
     .metadata-fieldset {
@@ -249,6 +307,120 @@
       display: flex;
       gap: 8px;
       margin-top: 8px;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .metadata-done-btn {
+      padding: 6px 13px;
+    }
+
+    button.text-link-btn {
+      background: transparent;
+      border: 0;
+      color: #46b5c4;
+      padding: 0;
+      text-decoration: none;
+      border-bottom: 1px solid #46b5c4;
+      font-size: 0.8rem;
+      border-radius: 0;
+      margin-right: 15px;
+      transition: all 0.17s ease-in-out;
+    }
+
+    button.text-link-btn:hover {
+      border-bottom: 3px solid;
+    }
+
+    .additional-data-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-family: var(--mono-font);
+      font-size: 12px;
+    }
+
+    .additional-data-row {
+      border-left: 1px solid #444;
+      padding-left: 8px;
+    }
+
+    .additional-data-main {
+      display: grid;
+      grid-template-columns: minmax(92px, 0.42fr) minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: start;
+    }
+
+    .additional-data-key {
+      opacity: 0.78;
+      overflow-wrap: anywhere;
+    }
+
+    .additional-data-value {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .additional-data-actions-inline {
+      display: flex;
+      gap: 4px;
+    }
+
+    .additional-data-actions-inline button {
+      width: 24px;
+      height: 24px;
+      padding: 4px;
+    }
+
+    .additional-data-editor {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgb(0 0 0 / 55%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .additional-data-editor[hidden] {
+      display: none;
+    }
+
+    .additional-data-editor-card {
+      width: min(620px, calc(100vw - 40px));
+      max-height: min(680px, calc(100vh - 40px));
+      background: #081827;
+      border: 1px solid var(--blackberry-dk-blue-border);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 18px 50px rgb(0 0 0 / 45%);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .additional-data-editor-title {
+      font-size: 12px;
+      opacity: 0.85;
+    }
+
+    .additional-data-editor textarea {
+      min-height: 260px;
+      max-height: 440px;
+    }
+
+    .additional-data-editor-actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .additional-data-empty {
+      opacity: 0.72;
+      font-size: 12px;
     }
 
     #validationStatus {
@@ -527,7 +699,8 @@
     }
 
     .metadata-actions {
-      justify-content: center;
+      justify-content: flex-end;
+      align-items: center;
     }
 
     .store-icon {
@@ -1119,6 +1292,11 @@
       padding-top: 8px;
       padding-bottom: 8px;
     }
+
+    #metadataPanel input,
+    #metadataPanel textarea {
+      font-size: 0.85rem;
+    }
     </style>
   </head>
   <body>
@@ -1170,7 +1348,8 @@
     <aside>
       <div class="sidebar-title-row">
         <h2 class="sidebar-title">Metadata</h2>
-        <div>
+        <div id="metadataHeaderTabs"></div>
+        <div class="legacy-metadata-actions">
           <button id="editMetadataBtn" class="icon-btn" disabled title="Edit metadata">
             <svg class="icon edit-mini-icon core-action">
               <use href="icons.svg#edit-mini-icon"></use>

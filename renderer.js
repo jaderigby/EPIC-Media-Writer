@@ -7,6 +7,7 @@ const editor = document.getElementById("editor");
 const filePathEl = document.getElementById("filePath");
 const statusEl = document.getElementById("status");
 const metadataPanel = document.getElementById("metadataPanel");
+const metadataHeaderTabs = document.getElementById("metadataHeaderTabs");
 const editMetadataBtn = document.getElementById("editMetadataBtn");
 const addAlbumArtBtn = document.getElementById("addAlbumArtBtn");
 const storeAudioBtn = document.getElementById("storeAudioBtn");
@@ -159,6 +160,7 @@ let rawMetadataOpen = false;
 
 let currentMetadata = null;
 let metadataEditMode = false;
+let metadataActiveTab = "standard";
 let stagedAlbumArt = undefined; // undefined = no change, null = remove, object = { mimeType, data }
 
 let parseTimer = null;
@@ -332,8 +334,11 @@ function updateSidebarState() {
   metadataPanel.style.display =
     hasMetadata ? "" : "none";
 
-  editMetadataBtn.style.display =
-    hasMetadata ? "" : "none";
+  if (metadataHeaderTabs) {
+    metadataHeaderTabs.style.display = hasMetadata ? "" : "none";
+  }
+
+  editMetadataBtn.style.display = "none";
 
   const sidebarTitle =
     document.querySelector(".sidebar-title");
@@ -344,15 +349,14 @@ function updateSidebarState() {
   }
 
   if (addAlbumArtBtn) {
-    const albumArtPresent = Boolean(
-      currentMetadata?.albumArt ||
-      currentMetadata?.albumArtInfo
-    );
-
-    // Show Add button only when no album art present and NOT in edit mode.
-    addAlbumArtBtn.style.display = hasMetadata && !albumArtPresent && !metadataEditMode ? "" : "none";
-    addAlbumArtBtn.textContent = "Add Album Art";
+    addAlbumArtBtn.style.display = "none";
     addAlbumArtBtn.disabled = !hasMetadata;
+  }
+}
+
+function clearMetadataHeaderTabs() {
+  if (metadataHeaderTabs) {
+    metadataHeaderTabs.textContent = "";
   }
 }
 
@@ -1077,6 +1081,7 @@ function restoreSessionState() {
       editMetadataBtn.disabled = false;
     } else {
       metadataPanel.textContent = "";
+      clearMetadataHeaderTabs();
       editMetadataBtn.disabled = true;
     }
 
@@ -1122,6 +1127,7 @@ function resetSession() {
   validationStatusEl.textContent = "";
 
   metadataPanel.textContent = "";
+  clearMetadataHeaderTabs();
 
   saveBtn.disabled = true;
 
@@ -1362,35 +1368,191 @@ function getEditableId3Fields(metadata) {
     : [];
 }
 
-function renderEditableId3Fields(metadata) {
+function getAdditionalDataItems(metadata) {
+  const items = Array.isArray(metadata?.additionalData)
+    ? metadata.additionalData
+    : [];
+
+  if (metadata?.format !== "wav") return items;
+
+  return filterWavAdditionalDataItems(items);
+}
+
+function isWavSoftwareAdditionalDataItem(item) {
+  const label = String(item?.label || "").trim().toUpperCase();
+  const id = String(item?.id || "").trim().toUpperCase();
+
+  return (
+    label === "ISFT" ||
+    label === "SOFTWARE" ||
+    id.endsWith(":ISFT") ||
+    id.endsWith(":SOFTWARE")
+  );
+}
+
+function filterWavAdditionalDataItems(items) {
+  return items
+    .map(item => {
+      if (isWavSoftwareAdditionalDataItem(item)) return null;
+
+      const children = Array.isArray(item?.children)
+        ? filterWavAdditionalDataItems(item.children)
+        : [];
+
+      if (
+        item?.label === "LIST/INFO" &&
+        Array.isArray(item?.children) &&
+        children.length === 0
+      ) {
+        return null;
+      }
+
+      return {
+        ...item,
+        value: item?.label === "LIST/INFO" && Array.isArray(item?.children)
+          ? `${children.length} additional field${children.length === 1 ? "" : "s"}`
+          : item?.value,
+        children
+      };
+    })
+    .filter(Boolean);
+}
+
+function getEditableId3FrameMap(metadata) {
   const editableFrames = getEditableId3Fields(metadata);
 
-  if (!editableFrames.length) return "";
+  return new Map(
+    editableFrames
+      .filter(frame => frame?.key)
+      .map(frame => [frame.key, frame])
+  );
+}
 
-  const controls = editableFrames.map((frame, index) => {
-    const fieldId = `editableId3Frame_${index}`;
-    const value = String(frame?.value || "");
+function formatAdditionalDataText(items, depth = 0) {
+  return items
+    .map(item => {
+      const label = String(item?.label || item?.id || "").trim();
+      const value = String(item?.value || "").trim();
+      const children = Array.isArray(item?.children)
+        ? item.children
+        : [];
+      const indent = "  ".repeat(depth);
+      const line = value
+        ? `${indent}${label}: ${value}`
+        : `${indent}${label}`;
+      const childText = children.length
+        ? `\n${formatAdditionalDataText(children, depth + 1)}`
+        : "";
+
+      return `${line}${childText}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function renderAdditionalDataRows(items, depth = 0, editableByKey = null) {
+  if (!items.length && depth === 0) {
+    return `<div class="additional-data-empty">No additional data found.</div>`;
+  }
+
+  return items.map((item, index) => {
+    const label = String(item?.label || item?.id || "").trim();
+    const value = String(item?.value || "").trim();
+    const children = Array.isArray(item?.children)
+      ? item.children
+      : [];
+    const editableFrame = item?.key && editableByKey
+      ? editableByKey.get(item.key)
+      : null;
+    const editableKey = editableFrame?.key || "";
+    const actions = [
+      editableFrame
+        ? `
+          <button
+            type="button"
+            class="additional-data-edit-btn"
+            data-additional-data-edit-key="${escapeHtml(editableKey)}"
+            title="Edit ${escapeHtml(label)}"
+          >
+            <svg class="icon edit-mini-icon core-action">
+              <use href="icons.svg#edit-mini-icon"></use>
+            </svg>
+          </button>
+        `
+        : "",
+      (item?.removable || editableFrame) && editableKey
+        ? `
+          <button
+            type="button"
+            class="additional-data-remove-btn"
+            data-additional-data-remove-key="${escapeHtml(editableKey)}"
+            title="Remove ${escapeHtml(label)}"
+          >
+            <svg class="icon delete-icon core-action">
+              <use href="icons.svg#delete-icon"></use>
+            </svg>
+          </button>
+        `
+        : ""
+    ].filter(Boolean).join("");
 
     return `
-      <label for="${fieldId}">
-        ${escapeHtml(frame?.label || frame?.id || "ID3 Frame")}
-        <textarea
-          id="${fieldId}"
-          data-id3-frame-key="${escapeHtml(frame?.key || "")}"
-          data-id3-frame-id="${escapeHtml(frame?.id || "")}"
-          data-id3-frame-type="${escapeHtml(frame?.type || "")}"
-          data-id3-frame-description="${escapeHtml(frame?.description || "")}"
-          data-id3-frame-language="${escapeHtml(frame?.language || "")}"
-        >${escapeHtml(value)}</textarea>
-      </label>
+      <div class="additional-data-row" style="margin-left: ${depth * 10}px;">
+        <div class="additional-data-main">
+          <div class="additional-data-key">${escapeHtml(label)}</div>
+          <div class="additional-data-value" data-additional-data-value="${escapeHtml(editableKey)}">${escapeHtml(value)}</div>
+          <div class="additional-data-actions-inline">${actions}</div>
+        </div>
+        ${children.length ? renderAdditionalDataRows(children, depth + 1, editableByKey) : ""}
+      </div>
     `;
   }).join("");
+}
+
+function renderAdditionalDataHiddenFields(editableByKey) {
+  if (!editableByKey?.size) return "";
+
+  return Array.from(editableByKey.values()).map(frame => `
+    <input
+      type="hidden"
+      data-id3-frame-key="${escapeHtml(frame?.key || "")}"
+      data-id3-frame-id="${escapeHtml(frame?.id || "")}"
+      data-id3-frame-type="${escapeHtml(frame?.type || "")}"
+      data-id3-frame-description="${escapeHtml(frame?.description || "")}"
+      data-id3-frame-language="${escapeHtml(frame?.language || "")}"
+      value="${escapeHtml(frame?.value || "")}"
+    />
+  `).join("");
+}
+
+function renderAdditionalDataPanel(metadata, { editable = false } = {}) {
+  const items = getAdditionalDataItems(metadata);
+  const editableByKey = editable
+    ? getEditableId3FrameMap(metadata)
+    : null;
+  const hasEditableItems = Boolean(editableByKey?.size);
 
   return `
-    <fieldset class="metadata-fieldset">
-      <legend>Advanced ID3 Metadata</legend>
-      ${controls}
-    </fieldset>
+    <div class="additional-data-list">
+      ${hasEditableItems
+        ? `
+          <div class="additional-data-editor" data-additional-data-editor hidden>
+            <div class="additional-data-editor-card">
+              <div class="additional-data-editor-title" data-additional-data-editor-title></div>
+              <textarea data-additional-data-editor-input></textarea>
+              <div class="additional-data-editor-actions">
+                <button type="button" class="text-link-btn" data-additional-data-editor-cancel>Cancel</button>
+                <button type="button" class="metadata-done-btn" data-additional-data-editor-close>Done</button>
+              </div>
+            </div>
+          </div>
+          <div class="additional-data-hidden-fields">
+            ${renderAdditionalDataHiddenFields(editableByKey)}
+          </div>
+        `
+        : ""}
+      ${renderAdditionalDataRows(items, 0, editableByKey)}
+    </div>
   `;
 }
 
@@ -1407,76 +1569,122 @@ function getEditableId3FormFields(form) {
     .filter(frame => frame.key || frame.id);
 }
 
-function renderMetadataEditForm(metadata) {
-  const fields = getStandardFields(metadata);
-  const editableId3Fields = renderEditableId3Fields(metadata);
-
-  metadataPanel.innerHTML = `
-    <form id="metadataEditForm" class="metadata-form">
-      <label>Name
-        <input name="title" value="${escapeHtml(fields.title)}" />
-      </label>
-
-      <label>Artist
-        <input name="artist" value="${escapeHtml(fields.artist)}" />
-      </label>
-
-      <label>Album
-        <input name="album" value="${escapeHtml(fields.album)}" />
-      </label>
-
-      <label>Track Number
-        <input name="track" value="${escapeHtml(fields.track)}" />
-      </label>
-
-      <label>Year
-        <input name="year" value="${escapeHtml(fields.year)}" />
-      </label>
-
-      <label>Genre
-        <input name="genre" value="${escapeHtml(fields.genre)}" />
-      </label>
-
-      <label>Comments
-        <textarea name="comment">${escapeHtml(fields.comment)}</textarea>
-      </label>
-
-      ${editableId3Fields}
-
-      <div class="metadata-actions">
-        <button type="submit">
-          <svg class="icon store-icon">
-            <use href="icons.svg#store-icon"></use>
-          </svg>
-          Store Metadata
-        </button>
-        <button type="button" id="cancelMetadataEditBtn">Cancel</button>
-      </div>
-    </form>
-  `;
-
-  document.getElementById("cancelMetadataEditBtn")?.addEventListener("click", () => {
-    metadataEditMode = false;
-    setEditMetadataBtnIcon(false);
-    editMetadataBtn.title = "Edit metadata";
-    renderMetadata(currentMetadata);
+async function saveMetadataFieldChanges(fields) {
+  const result = await window.EpicInspector.saveMetadata({
+    filePath: linkedAudioPath || currentFilePath,
+    fields,
+    albumArt: stagedAlbumArt
   });
 
-  document.getElementById("metadataEditForm")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
+  currentMetadata = result.metadata;
+  stagedAlbumArt = undefined;
+  saveSessionState();
+  updateHeaderState();
 
-    const form = new FormData(e.currentTarget);
+  return result;
+}
 
-    const fields = {
-      title: String(form.get("title") || ""),
-      artist: String(form.get("artist") || ""),
-      album: String(form.get("album") || ""),
-      track: String(form.get("track") || ""),
-      year: String(form.get("year") || ""),
-      genre: String(form.get("genre") || ""),
-      comment: String(form.get("comment") || "")
-    };
-    const editableId3Frames = getEditableId3FormFields(e.currentTarget);
+function wireAdditionalDataEditor(root) {
+  const editorPanel = root.querySelector("[data-additional-data-editor]");
+  const editorTitle = root.querySelector("[data-additional-data-editor-title]");
+  const editorInput = root.querySelector("[data-additional-data-editor-input]");
+  const editorCloseBtn = root.querySelector("[data-additional-data-editor-close]");
+  const editorCancelBtn = root.querySelector("[data-additional-data-editor-cancel]");
+
+  if (!editorPanel || !editorTitle || !editorInput) return;
+
+  let activeKey = "";
+
+  const getHiddenField = key => root.querySelector(
+    `[data-id3-frame-key="${CSS.escape(key)}"]`
+  );
+  const getValueDisplay = key => root.querySelector(
+    `[data-additional-data-value="${CSS.escape(key)}"]`
+  );
+
+  root.querySelectorAll("[data-additional-data-edit-key]").forEach(button => {
+    button.addEventListener("click", () => {
+      activeKey = button.dataset.additionalDataEditKey || "";
+
+      const hiddenField = getHiddenField(activeKey);
+      const row = button.closest(".additional-data-row");
+      const label = row?.querySelector(".additional-data-key")?.textContent?.trim() || "Additional Data";
+
+      editorTitle.textContent = label;
+      editorInput.value = hiddenField?.value || "";
+      editorPanel.hidden = false;
+      editorInput.focus();
+    });
+  });
+
+  root.querySelectorAll("[data-additional-data-remove-key]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const key = button.dataset.additionalDataRemoveKey || "";
+      const row = button.closest(".additional-data-row");
+      const label = row?.querySelector(".additional-data-key")?.textContent?.trim() || "Additional Data";
+      const ok = await showConfirmModal({
+        title: "Remove Additional Data",
+        message: `Remove ${label}?`,
+        confirmLabel: "Remove",
+        cancelLabel: "Cancel"
+      });
+
+      if (!ok) return;
+
+      const hiddenField = getHiddenField(key);
+      const valueDisplay = getValueDisplay(key);
+
+      if (hiddenField) {
+        hiddenField.value = "";
+      }
+
+      if (valueDisplay) {
+        valueDisplay.textContent = "(marked for removal)";
+      }
+
+      if (activeKey === key) {
+        editorInput.value = "";
+        editorPanel.hidden = true;
+        activeKey = "";
+      }
+
+      const fields = getStandardFields(currentMetadata);
+      const editableId3Frames = getEditableId3FormFields(root);
+
+      if (editableId3Frames.length) {
+        fields.id3Frames = editableId3Frames;
+      }
+
+      try {
+        statusEl.textContent = "Saving metadata...";
+        await saveMetadataFieldChanges(fields);
+        metadataEditMode = false;
+        metadataActiveTab = "additional";
+        renderMetadata(currentMetadata);
+        statusEl.textContent = "Metadata saved.";
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = `Metadata save failed:\n${err.message || err}`;
+      }
+    });
+  });
+
+  const saveActiveAdditionalDataEdit = async () => {
+    if (!activeKey) return;
+
+    const hiddenField = getHiddenField(activeKey);
+    const valueDisplay = getValueDisplay(activeKey);
+
+    if (hiddenField) {
+      hiddenField.value = editorInput.value;
+    }
+
+    if (valueDisplay) {
+      valueDisplay.textContent = editorInput.value;
+    }
+
+    const fields = getStandardFields(currentMetadata);
+    const editableId3Frames = getEditableId3FormFields(root);
 
     if (editableId3Frames.length) {
       fields.id3Frames = editableId3Frames;
@@ -1484,31 +1692,44 @@ function renderMetadataEditForm(metadata) {
 
     try {
       statusEl.textContent = "Saving metadata...";
-
-      const result = await window.EpicInspector.saveMetadata({
-        filePath: linkedAudioPath || currentFilePath,
-        fields,
-        albumArt: stagedAlbumArt // undefined => no change, null => remove, object => set
-      });
-      currentMetadata = result.metadata;
-      // clear staged state after successful save
-      stagedAlbumArt = undefined;
+      await saveMetadataFieldChanges(fields);
       metadataEditMode = false;
-
-      setEditMetadataBtnIcon(false);
-      editMetadataBtn.title = "Edit metadata";
-
+      editorPanel.hidden = true;
+      activeKey = "";
+      metadataActiveTab = "additional";
       renderMetadata(currentMetadata);
-      // update sidebar buttons/visibility after save
-      updateHeaderState();
-
       statusEl.textContent = "Metadata saved.";
-      saveSessionState();
     } catch (err) {
       console.error(err);
       statusEl.textContent = `Metadata save failed:\n${err.message || err}`;
     }
+  };
+
+  const closeAdditionalDataEditor = () => {
+    editorPanel.hidden = true;
+    activeKey = "";
+  };
+
+  editorCloseBtn?.addEventListener("click", saveActiveAdditionalDataEdit);
+  editorCancelBtn?.addEventListener("click", closeAdditionalDataEditor);
+
+  editorPanel.addEventListener("click", (event) => {
+    if (event.target === editorPanel) {
+      closeAdditionalDataEditor();
+    }
   });
+
+  editorInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeAdditionalDataEditor();
+    }
+  });
+}
+
+function renderMetadataEditForm(metadata) {
+  metadataEditMode = true;
+  metadataActiveTab = "standard";
+  renderMetadata(metadata);
 }
 
 clearSessionBtn?.addEventListener("click", async () => {
@@ -1528,7 +1749,10 @@ editMetadataBtn?.addEventListener("click", () => {
   } else {
     renderMetadata(currentMetadata);
     setEditMetadataBtnIcon(false);
+    editMetadataBtn.title = "Edit metadata";
   }
+
+  updateHeaderState();
 });
 
 function escapeHtml(value) {
@@ -1975,45 +2199,12 @@ function renderMetadata(metadata) {
   const isMp3 = metadata?.format === "mp3";
   const info = metadata?.listInfo || {};
   const mp3 = metadata?.mp3Tags || {};
-  const id3Frames = Array.isArray(metadata?.id3Frames)
-    ? metadata.id3Frames
-    : [];
-  const id3FrameDetails = id3Frames
-    .map(frame => {
-      const label = String(frame?.label || frame?.id || "").trim();
-      const value = String(frame?.value || "").trim();
-
-      if (!label && !value) return "";
-      if (!value) return label;
-
-      return `${label}: ${value}`;
-    })
-    .filter(Boolean)
-    .join("\n");
   const chunks = metadata?.wavChunks || [];
-  const wavMetadataDetails = Array.isArray(metadata?.wavMetadataDetails)
-    ? metadata.wavMetadataDetails
-    : [];
-  const wavMetadataDetailText = wavMetadataDetails
-    .map(detail => {
-      const label = String(detail?.label || "").trim();
-      const value = String(detail?.value || "").trim();
-
-      if (!label && !value) return "";
-      if (!value) return label;
-
-      return `${label}: ${value}`;
-    })
-    .filter(Boolean)
-    .join("\n");
   const albumArtInfo = metadata?.albumArtInfo;
   const albumArtBase64 = typeof metadata?.albumArt === "string"
     ? metadata.albumArt
     : albumArtInfo?.data;
   const albumArtMime = metadata?.albumArtMime || albumArtInfo?.mimeType;
-  const rawMetadataText = isMp3
-    ? id3FrameDetails
-    : wavMetadataDetailText;
 
   const items = isMp3
     ? [
@@ -2052,37 +2243,64 @@ function renderMetadata(metadata) {
     return String(value ?? "").trim() !== "";
   });
 
-  let html = visibleItems.map(([key, value]) => `
+  const standardReadHtml = visibleItems.map(([key, value]) => `
     <div class="meta-item">
       <div class="meta-key">${escapeHtml(key)}</div>
       <div class="meta-value">${escapeHtml(value)}</div>
     </div>
   `).join("");
+  const fields = getStandardFields(metadata);
+  const standardEditHtml = `
+    <div class="standard-metadata-toolbar">
+      <button type="button" class="icon-btn cancelMetadataEditBtn" title="Close standard metadata editor">
+        <svg class="icon close-icon core-action">
+          <use href="icons.svg#close-icon"></use>
+        </svg>
+      </button>
+    </div>
 
-  if (String(rawMetadataText || "").trim()) {
-    html += `
-      <div
-        class="meta-item raw-metadata-toggle"
-        role="button"
-        tabindex="0"
-        aria-expanded="false"
-      >
-        <div class="meta-key raw-metadata-title">
-          <span class="raw-metadata-arrow" aria-hidden="true">▶</span>
-          <strong>Raw Metadata</strong>
-        </div>
-        <div class="meta-value"></div>
-      </div>
-      <div
-        class="meta-item raw-metadata-content"
-      >
-        <div class="meta-key"></div>
-        <div class="meta-value" style="white-space: pre-wrap;">${escapeHtml(rawMetadataText)}</div>
-      </div>
-    `;
-  }
+    <div class="metadata-field">
+      <label for="standardTitle">Name</label>
+      <input id="standardTitle" name="title" value="${escapeHtml(fields.title)}" />
+    </div>
 
-  // Add album art preview at the bottom if available
+    <div class="metadata-field">
+      <label for="standardArtist">Artist</label>
+      <input id="standardArtist" name="artist" value="${escapeHtml(fields.artist)}" />
+    </div>
+
+    <div class="metadata-field">
+      <label for="standardAlbum">Album</label>
+      <input id="standardAlbum" name="album" value="${escapeHtml(fields.album)}" />
+    </div>
+
+    <div class="metadata-field">
+      <label for="standardTrack">Track Number</label>
+      <input id="standardTrack" name="track" value="${escapeHtml(fields.track)}" />
+    </div>
+
+    <div class="metadata-field">
+      <label for="standardYear">Year</label>
+      <input id="standardYear" name="year" value="${escapeHtml(fields.year)}" />
+    </div>
+
+    <div class="metadata-field">
+      <label for="standardGenre">Genre</label>
+      <input id="standardGenre" name="genre" value="${escapeHtml(fields.genre)}" />
+    </div>
+
+    <div class="metadata-field">
+      <label for="standardComment">Comments</label>
+      <textarea id="standardComment" name="comment">${escapeHtml(fields.comment)}</textarea>
+    </div>
+
+      <div class="metadata-actions">
+        <button type="button" class="text-link-btn cancelMetadataEditBtn">Cancel</button>
+        <button type="submit" class="metadata-done-btn">Done</button>
+      </div>
+  `;
+  let albumArtHtml = "";
+
   if (
     albumArtBase64 &&
     albumArtMime &&
@@ -2090,7 +2308,7 @@ function renderMetadata(metadata) {
   ) {
     const dataUrl = `data:${albumArtMime};base64,${albumArtBase64}`;
 
-    html += `
+    albumArtHtml = `
       <div class="album-art-container">
         <div class="album-art-shell">
           <img class="album-art-preview" src="${dataUrl}" alt="Album Art" />
@@ -2111,49 +2329,113 @@ function renderMetadata(metadata) {
         </div>
       </div>
     `;
+  } else {
+    albumArtHtml = `
+      <button type="button" id="standardAddAlbumArtBtn" title="Add album art">Add Album Art</button>
+    `;
+  }
+  const additionalDataPanel = renderAdditionalDataPanel(metadata, { editable: true });
+
+  if (metadataHeaderTabs) {
+    metadataHeaderTabs.innerHTML = `
+      <div class="metadata-tabs" role="tablist" aria-label="Metadata sections">
+        <button type="button" class="metadata-tab ${metadataActiveTab === "standard" ? "active" : ""}" data-metadata-tab="standard" role="tab" aria-selected="${metadataActiveTab === "standard" ? "true" : "false"}">General</button>
+        <button type="button" class="metadata-tab ${metadataActiveTab === "additional" ? "active" : ""}" data-metadata-tab="additional" role="tab" aria-selected="${metadataActiveTab === "additional" ? "true" : "false"}">Additional Data</button>
+      </div>
+    `;
   }
 
-  metadataPanel.innerHTML = html;
+  metadataPanel.innerHTML = `
+    <form id="metadataEditForm" class="metadata-form">
+      <div class="metadata-tab-panel" data-metadata-tab-panel="standard" ${metadataActiveTab === "standard" ? "" : "hidden"}>
+        ${metadataEditMode
+          ? standardEditHtml
+          : `
+            <div class="standard-metadata-toolbar">
+              <button type="button" id="standardMetadataEditBtn" class="icon-btn" title="Edit standard metadata">
+                <svg class="icon edit-mini-icon core-action">
+                  <use href="icons.svg#edit-mini-icon"></use>
+                </svg>
+              </button>
+            </div>
+            ${standardReadHtml}
+            ${albumArtHtml}
+          `}
+      </div>
 
-  const rawMetadataToggle = metadataPanel.querySelector(".raw-metadata-toggle");
-  const rawMetadataContent = metadataPanel.querySelector(".raw-metadata-content");
+      <div class="metadata-tab-panel" data-metadata-tab-panel="additional" ${metadataActiveTab === "additional" ? "" : "hidden"}>
+        ${additionalDataPanel}
+      </div>
+    </form>
+  `;
 
-  const setRawMetadataOpen = (isOpen, { persist = true } = {}) => {
-    if (!rawMetadataToggle || !rawMetadataContent) return;
+  metadataHeaderTabs?.querySelectorAll("[data-metadata-tab]").forEach(tab => {
+    tab.addEventListener("click", () => {
+      const target = tab.dataset.metadataTab || "standard";
+      metadataActiveTab = target;
 
-    rawMetadataOpen = Boolean(isOpen);
+      metadataHeaderTabs.querySelectorAll("[data-metadata-tab]").forEach(candidate => {
+        const active = candidate.dataset.metadataTab === target;
+        candidate.classList.toggle("active", active);
+        candidate.setAttribute("aria-selected", active ? "true" : "false");
+      });
 
-    rawMetadataToggle.setAttribute("aria-expanded", rawMetadataOpen ? "true" : "false");
-    rawMetadataToggle.classList.toggle("open", rawMetadataOpen);
-    rawMetadataContent.classList.toggle("open", rawMetadataOpen);
+      metadataPanel.querySelectorAll("[data-metadata-tab-panel]").forEach(panel => {
+        panel.hidden = panel.dataset.metadataTabPanel !== target;
+      });
+    });
+  });
 
-    if (persist) {
-      saveSessionState();
+  document.getElementById("standardMetadataEditBtn")?.addEventListener("click", () => {
+    metadataEditMode = true;
+    metadataActiveTab = "standard";
+    renderMetadata(currentMetadata);
+    updateHeaderState();
+  });
+
+  metadataPanel.querySelectorAll(".cancelMetadataEditBtn").forEach(button => {
+    button.addEventListener("click", () => {
+    metadataEditMode = false;
+    renderMetadata(currentMetadata);
+    updateHeaderState();
+    });
+  });
+
+  document.getElementById("metadataEditForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const form = new FormData(event.currentTarget);
+    const fields = {
+      title: String(form.get("title") || ""),
+      artist: String(form.get("artist") || ""),
+      album: String(form.get("album") || ""),
+      track: String(form.get("track") || ""),
+      year: String(form.get("year") || ""),
+      genre: String(form.get("genre") || ""),
+      comment: String(form.get("comment") || "")
+    };
+    const editableId3Frames = getEditableId3FormFields(event.currentTarget);
+
+    if (editableId3Frames.length) {
+      fields.id3Frames = editableId3Frames;
     }
-  };
 
-  const toggleRawMetadata = () => {
-    if (!rawMetadataToggle || !rawMetadataContent) return;
-
-    const nextOpen =
-      rawMetadataToggle.getAttribute("aria-expanded") !== "true";
-
-    setRawMetadataOpen(nextOpen);
-  };
-
-  if (rawMetadataToggle && rawMetadataContent) {
-    setRawMetadataOpen(rawMetadataOpen, { persist: false });
-  }
-
-  rawMetadataToggle?.addEventListener("click", toggleRawMetadata);
-  rawMetadataToggle?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      toggleRawMetadata();
+    try {
+      statusEl.textContent = "Saving metadata...";
+      await saveMetadataFieldChanges(fields);
+      metadataEditMode = false;
+      metadataActiveTab = "standard";
+      renderMetadata(currentMetadata);
+      statusEl.textContent = "Metadata saved.";
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = `Metadata save failed:\n${err.message || err}`;
     }
   });
 
   wireAlbumArtNormalModeActions();
+  document.getElementById("standardAddAlbumArtBtn")?.addEventListener("click", addAlbumArt);
+  wireAdditionalDataEditor(metadataPanel);
 }
 
 editor.addEventListener("focus", showGhostHeaderIfAppropriate);
@@ -2266,6 +2548,7 @@ openBtn.addEventListener("click", async () => {
       metadataEditMode = false;
 
       metadataPanel.textContent = "";
+      clearMetadataHeaderTabs();
       editMetadataBtn.disabled = true;
       setEditMetadataBtnIcon(false);
       editMetadataBtn.title = "Edit metadata";
@@ -2433,6 +2716,7 @@ unlinkAudioBtn?.addEventListener("click", () => {
   linkedAudioPath = "";
   currentMetadata = null;
   metadataPanel.textContent = "";
+  clearMetadataHeaderTabs();
   editMetadataBtn.disabled = true;
   saveSessionState();
   updateHeaderState();
