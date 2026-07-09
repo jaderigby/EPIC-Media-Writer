@@ -579,21 +579,15 @@ ipcMain.handle("studio-timing:notify-saved", async (_event, payload) => {
 ipcMain.handle("save-metadata", async (_event, payload) => {
   const { filePath, fields, albumArt } = payload;
 
-  // Read original to preserve EPICX if present
-  const original = await readMediaMetadata(filePath);
-
   if (hasStandardMetadataFields(fields)) {
     await writeStandardMetadata(filePath, fields);
   }
 
   if (albumArt !== undefined) {
-    const epicx = String(original.epicx || "");
-
     await writeMediaArtworkToOutput({
       sourceAudioPath: filePath,
       outputPath: filePath,
-      albumArt,
-      epicx
+      albumArt
     });
 
     const metadata = await readMediaMetadata(filePath);
@@ -892,8 +886,7 @@ async function writeMediaMetadataToOutput({
 async function writeMediaArtworkToOutput({
   sourceAudioPath,
   outputPath,
-  albumArt,
-  epicx
+  albumArt
 }) {
   const kind = getMediaKind(sourceAudioPath);
 
@@ -902,7 +895,6 @@ async function writeMediaArtworkToOutput({
       sourceAudioPath,
       outputPath,
       metadata: {
-        epicx,
         albumArt,
         removeAlbumArt: albumArt === null,
         timestamp: new Date().toISOString()
@@ -916,7 +908,6 @@ async function writeMediaArtworkToOutput({
       sourceAudioPath,
       outputPath,
       metadata: {
-        epicx,
         albumArt,
         removeAlbumArt: albumArt === null,
         timestamp: new Date().toISOString()
@@ -1035,17 +1026,13 @@ ipcMain.handle("add-album-art", async (_event, payload) => {
     throw new Error("Selected file is not a supported image.");
   }
 
-  const metadata = await readMediaMetadata(audioPath);
-  const epicx = String(metadata.epicx || "");
-
   await writeMediaArtworkToOutput({
     sourceAudioPath: audioPath,
     outputPath: audioPath,
     albumArt: {
       mimeType,
       data: imageBuffer.toString("base64")
-    },
-    epicx
+    }
   });
 
   const newMetadata = await readMediaMetadata(audioPath);
