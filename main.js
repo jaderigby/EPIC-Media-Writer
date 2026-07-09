@@ -112,7 +112,7 @@ function previewEpicLines(value, maxLines = 10) {
     .slice(0, maxLines);
 
   if (!lines.length || !lines.join("").trim()) {
-    return "(No EPICX data)";
+    return "(No EPIC data)";
   }
 
   return lines.join("\n");
@@ -345,7 +345,7 @@ async function confirmReplaceEmbeddedEpic({
       resizable: false,
       minimizable: false,
       maximizable: false,
-      title: "Replace embedded EPICX?",
+      title: "Replace embedded EPIC?",
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -491,8 +491,8 @@ async function confirmReplaceEmbeddedEpic({
             <path d="M235.961,313.85L85.782,163.67L163.621,85.831L313.8,236.011L463.979,85.831L541.818,163.67L391.639,313.85L541.818,464.029L463.979,541.868L313.8,391.689L163.621,541.868L85.782,464.029L235.961,313.85Z"/>
           </svg>
         </button>
-        <h1>This audio file already contains different EPICX data.</h1>
-        <p>RChoose which EPICX content to use for this audio file.</p>
+        <h1>This audio file already contains different EPIC data.</h1>
+        <p>Choose which EPIC content to use for this audio file.</p>
 
         <div class="compare">
           <div class="panel">
@@ -671,18 +671,7 @@ ipcMain.handle("store-in-audio", async (event, payload) => {
     }
   }
 
-  const parentWindow =
-    BrowserWindow.fromWebContents(event.sender);
-
-  const outputPath = await requestEpicAudioOutputPath({
-    parentWindow,
-    sourcePath: targetPath,
-    title: "Store EPIC Audio File"
-  });
-
-  if (!outputPath) {
-    return null;
-  }
+  const outputPath = getEpicAudioOutputPath(targetPath);
 
   await writeMediaMetadataToOutput({
     sourceAudioPath: targetPath,
@@ -861,8 +850,7 @@ async function writeMediaMetadataToOutput({
       sourceAudioPath,
       outputPath,
       metadata: {
-        epicx,
-        timestamp: new Date().toISOString()
+        epicx
       }
     });
     return;
@@ -873,8 +861,7 @@ async function writeMediaMetadataToOutput({
       sourceAudioPath,
       outputPath,
       metadata: {
-        epicx,
-        timestamp: new Date().toISOString()
+        epicx
       }
     });
     return;
@@ -896,8 +883,7 @@ async function writeMediaArtworkToOutput({
       outputPath,
       metadata: {
         albumArt,
-        removeAlbumArt: albumArt === null,
-        timestamp: new Date().toISOString()
+        removeAlbumArt: albumArt === null
       }
     });
     return;
@@ -909,8 +895,7 @@ async function writeMediaArtworkToOutput({
       outputPath,
       metadata: {
         albumArt,
-        removeAlbumArt: albumArt === null,
-        timestamp: new Date().toISOString()
+        removeAlbumArt: albumArt === null
       }
     });
     return;
@@ -968,17 +953,27 @@ ipcMain.handle("open-media", async () => {
 ipcMain.handle("save-media", async (event, payload) => {
   const { filePath, epicx } = payload;
 
-  const parentWindow =
-    BrowserWindow.fromWebContents(event.sender);
+  const existingMetadata = await readMediaMetadata(filePath);
+  const hasExistingEpicx =
+    String(existingMetadata?.epicx || "").trim().length > 0;
+  const isAddingEpicx =
+    String(epicx || "").trim().length > 0;
 
-  const outputPath = await requestEpicAudioOutputPath({
-    parentWindow,
-    sourcePath: filePath,
-    title: "Save EPIC Audio File"
-  });
+  let outputPath = filePath;
 
-  if (!outputPath) {
-    return null;
+  if (!hasExistingEpicx && isAddingEpicx) {
+    const parentWindow =
+      BrowserWindow.fromWebContents(event.sender);
+
+    outputPath = await requestEpicAudioOutputPath({
+      parentWindow,
+      sourcePath: filePath,
+      title: "Save EPIC Audio File"
+    });
+
+    if (!outputPath) {
+      return null;
+    }
   }
 
   await writeMediaMetadataToOutput({

@@ -179,6 +179,25 @@ function wavFile(chunks) {
   return Buffer.concat([header, body]);
 }
 
+function getWavChunkData(buffer, chunkId) {
+  let offset = 12;
+
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString("ascii", offset, offset + 4);
+    const size = buffer.readUInt32LE(offset + 4);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + size;
+
+    if (id === chunkId) {
+      return buffer.subarray(dataStart, dataEnd);
+    }
+
+    offset = dataEnd + (size % 2);
+  }
+
+  return null;
+}
+
 function additionalLabels(metadata) {
   return (metadata.additionalData || []).map(item => item.label);
 }
@@ -210,6 +229,8 @@ async function testMp3AdditionalDataAndPreservation(tmpDir) {
   const removeArtOut = path.join(tmpDir, "remove-art.mp3");
   const standardOut = path.join(tmpDir, "standard.mp3");
   const removeAdditionalOut = path.join(tmpDir, "remove-additional.mp3");
+  const removeEpicOut = path.join(tmpDir, "remove-epic.mp3");
+  const writeEpicOut = path.join(tmpDir, "write-epic.mp3");
 
   await fs.writeFile(source, mp3File([
     mp3Frame("TIT2", mp3TextFrame("Avery")),
@@ -239,6 +260,7 @@ async function testMp3AdditionalDataAndPreservation(tmpDir) {
     "TPE1",
     "Comment: eng",
     "Picture",
+    "Custom Text: EPIC",
     "Custom Text: EPICX"
   ], "MP3 source");
 
@@ -333,12 +355,56 @@ async function testMp3AdditionalDataAndPreservation(tmpDir) {
   ], "MP3 additional data removal");
   assert.strictEqual(Boolean(removeAdditionalMetadata.albumArt), true);
   assert.strictEqual(removeAdditionalMetadata.epicx, "project payload");
+
+  await writeMp3WithMetadata({
+    sourceAudioPath: source,
+    outputPath: removeEpicOut,
+    metadata: { epicx: "" }
+  });
+
+  const removeEpicMetadata = await readMp3Metadata({ path: removeEpicOut });
+
+  assert.strictEqual(String(removeEpicMetadata.epicx || ""), "");
+  rejectLabels(removeEpicMetadata, [
+    "Custom Text: EPIC",
+    "Custom Text: EPICX"
+  ], "MP3 EPIC removal");
+  requireLabels(removeEpicMetadata, [
+    "Comment: eng: vendor-note",
+    "Official Audio Source",
+    "Lyrics: eng",
+    "Custom Text: VendorField",
+    "PRIV: owner@example.com",
+    "ID3v1"
+  ], "MP3 EPIC removal");
+  assert.strictEqual(Boolean(removeEpicMetadata.albumArt), true);
+
+  await writeMp3WithMetadata({
+    sourceAudioPath: source,
+    outputPath: writeEpicOut,
+    metadata: { epicx: "updated project payload" }
+  });
+
+  const writeEpicBuffer = await fs.readFile(writeEpicOut);
+  const writeEpicMetadata = await readMp3Metadata({ path: writeEpicOut });
+
+  assert.strictEqual(writeEpicMetadata.epicx, "updated project payload");
+  assert(
+    writeEpicBuffer.includes(Buffer.from("\x03EPIC\x00updated project payload", "utf8")),
+    "MP3 should write project payload as TXXX:EPIC"
+  );
+  assert(
+    !writeEpicBuffer.includes(Buffer.from("\x03EPICX\x00", "utf8")),
+    "MP3 should not write the legacy TXXX:EPICX label"
+  );
 }
 
 async function testWavAdditionalDataAndPreservation(tmpDir) {
   const source = path.join(tmpDir, "source.wav");
   const standardOut = path.join(tmpDir, "standard.wav");
   const artOut = path.join(tmpDir, "art.wav");
+  const removeEpicOut = path.join(tmpDir, "remove-epic.wav");
+  const writeEpicOut = path.join(tmpDir, "write-epic.wav");
 
   const fmt = Buffer.alloc(16);
   fmt.writeUInt16LE(1, 0);
@@ -452,6 +518,45 @@ async function testWavAdditionalDataAndPreservation(tmpDir) {
     "ID3-in-WAV",
     "ABCD"
   ], "WAV artwork write");
+
+  await writeWavWithMetadata({
+    sourceAudioPath: source,
+    outputPath: removeEpicOut,
+    metadata: { epicx: "" }
+  });
+
+  const removeEpicMetadata = await readWavMetadata({ path: removeEpicOut });
+
+  assert.strictEqual(String(removeEpicMetadata.epicx || ""), "");
+  requireLabels(removeEpicMetadata, [
+    "LIST/INFO",
+    "LIST/adtl",
+    "Broadcast WAV (bext)",
+    "iXML",
+    "XMP",
+    "ID3-in-WAV",
+    "ABCD"
+  ], "WAV EPIC removal");
+  rejectLabels(removeEpicMetadata, [
+    "EPIC",
+    "Album Art",
+    "fmt",
+    "data"
+  ], "WAV EPIC removal");
+  assert.strictEqual(Boolean(removeEpicMetadata.albumArt), true);
+
+  await writeWavWithMetadata({
+    sourceAudioPath: source,
+    outputPath: writeEpicOut,
+    metadata: { epicx: "updated project payload" }
+  });
+
+  const writeEpicBuffer = await fs.readFile(writeEpicOut);
+  const writeEpicChunk = getWavChunkData(writeEpicBuffer, "EPIC");
+  const writeEpicMetadata = await readWavMetadata({ path: writeEpicOut });
+
+  assert.strictEqual(writeEpicMetadata.epicx, "updated project payload");
+  assert.strictEqual(writeEpicChunk.toString("utf8"), "updated project payload");
 }
 
 async function main() {

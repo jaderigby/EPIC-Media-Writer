@@ -306,6 +306,7 @@ function requestEditorHighlightSync() {
 
 function refreshEditorView() {
   requestEditorHighlightSync();
+  updateTocDrawerAvailability();
 
   if (tocDrawer?.classList.contains("open")) {
     renderSectionToc();
@@ -336,6 +337,14 @@ function updateSidebarState() {
 
   if (metadataHeaderTabs) {
     metadataHeaderTabs.style.display = hasMetadata ? "" : "none";
+  }
+
+  const metadataTitleRow =
+    document.querySelector(".sidebar-title-row");
+
+  if (metadataTitleRow) {
+    metadataTitleRow.style.display =
+      hasMetadata ? "" : "none";
   }
 
   editMetadataBtn.style.display = "none";
@@ -1877,6 +1886,19 @@ function renderSectionToc() {
   });
 }
 
+function updateTocDrawerAvailability() {
+  if (!tocDrawer) return;
+
+  const hasSections =
+    getSectionTocEntries(editor.value).length > 0;
+
+  tocDrawer.classList.toggle("is-hidden", !hasSections);
+
+  if (!hasSections) {
+    tocDrawer.classList.remove("open");
+  }
+}
+
 function formatTocLabel(sectionIdentity) {
   return escapeHtml(sectionIdentity).replace(
     /^(\[)(.*?)(\{\{.*?\}\})?(])$/,
@@ -2215,12 +2237,12 @@ function renderMetadata(metadata) {
         ["Year", mp3.year || ""],
         ["Genre", mp3.genre || ""],
         ["Comments", mp3.comment || ""],
+        ["EPIC", metadata?.epicx ? "Present" : "None"],
+        ...(metadata?.epicx
+          ? [["EPIC Size", `${metadata.epicx.length} chars`]]
+          : []),
         ["ID3 Version", metadata?.id3?.version || ""],
         ["ID3 Frames", metadata?.id3?.frameCount ?? ""],
-        ["EPICX", metadata?.epicx ? "Present" : "None"],
-        ...(metadata?.epicx
-          ? [["EPICX Size", `${metadata.epicx.length} chars`]]
-          : []),
         ["ID3v1", metadata?.id3?.v1Present ? "Present" : ""]
       ]
     : [
@@ -2232,9 +2254,9 @@ function renderMetadata(metadata) {
         ["Genre", info.IGNR || ""],
         ["Comments", info.ICMT || ""],
         ["Software", info.ISFT || ""],
-        ["EPICX", metadata?.epicx ? "Present" : "None"],
+        ["EPIC", metadata?.epicx ? "Present" : "None"],
         ...(metadata?.epicx
-          ? [["EPICX Size", `${metadata.epicx.length} chars`]]
+          ? [["EPIC Size", `${metadata.epicx.length} chars`]]
           : []),
         ["WAV Chunks", chunks.map(chunk => chunk.id.trim()).join(", ")]
       ];
@@ -2442,9 +2464,12 @@ editor.addEventListener("focus", showGhostHeaderIfAppropriate);
 editor.addEventListener("blur", showGhostHeaderIfAppropriate);
 
 editor.addEventListener("input", () => {
+  updateTocDrawerAvailability();
+
   if (tocDrawer?.classList.contains("open")) {
     renderSectionToc();
   }
+
   showGhostHeaderIfAppropriate();
   rememberAuthorKeyCorrection();
 });
@@ -2588,7 +2613,7 @@ openBtn.addEventListener("click", async () => {
     if (result.epicx) {
       statusEl.textContent =
         `Loaded media\n` +
-        `EPICX size: ${result.epicx.length} chars`;
+        `EPIC size: ${result.epicx.length} chars`;
     } else {
       statusEl.textContent = "Loaded media";
     }
@@ -2682,7 +2707,7 @@ storeAudioBtn?.addEventListener("click", async () => {
       editMetadataBtn.disabled = false;
 
       statusEl.textContent =
-        `Opened audio using existing embedded EPICX:\n${getDisplayName(currentFilePath)}`;
+        `Opened audio using existing embedded EPIC:\n${getDisplayName(currentFilePath)}`;
 
       scheduleEpicValidation();
       saveSessionState();

@@ -1034,6 +1034,10 @@
       transition: transform 180ms ease;
     }
 
+    .toc-drawer.is-hidden {
+      display: none;
+    }
+
     .toc-drawer.open {
       transform: translateX(0);
     }
@@ -1361,7 +1365,7 @@
       <div id="metadataPanel">No file loaded</div>
       <button id="addAlbumArtBtn" title="Add or replace album art">Add Album Art</button>
     </aside>
-    <aside id="tocDrawer" class="toc-drawer">
+    <aside id="tocDrawer" class="toc-drawer is-hidden">
       <button id="tocToggleBtn" class="toc-tab" type="button">
         Sections
       </button>
