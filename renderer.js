@@ -59,6 +59,7 @@ let statusObserver = null;
 let manualUndoStack = [];
 let manualRedoStack = [];
 let isApplyingUndo = false;
+let pendingAddedEpicxTimestamps = [];
 
 const MAX_UNDO_SNAPSHOTS = 100;
 
@@ -1227,6 +1228,74 @@ function isEpicxTimestampLine(line) {
   return /^\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}(?:\s*-->\s*\d{2}:\d{2}(?::\d{2})?\.\d{3})?\s*$/.test(line);
 }
 
+function timestampToMilliseconds(value) {
+  const parts = value.trim().split(":").map(Number);
+  const seconds = parts.pop();
+  const minutes = parts.pop();
+  const hours = parts.length ? parts.pop() : 0;
+  const [wholeSeconds, milliseconds] = String(seconds).split(".").map(Number);
+  return (((hours * 60) + minutes) * 60 + wholeSeconds) * 1000 + milliseconds;
+}
+
+function millisecondsToTimestamp(milliseconds, original) {
+  const hasHours = original.trim().split(":").length === 3;
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const remainder = milliseconds % 1000;
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  const minutes = String(Math.floor(totalSeconds / 60) % 60).padStart(2, "0");
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
+  return `${hasHours ? `${hours}:` : ""}${minutes}:${seconds}.${String(remainder).padStart(3, "0")}`;
+}
+
+function rememberAddedEpicxTimestamps(source, insertionStart, pastedText) {
+  const timestampPattern = /\d{2}:\d{2}(?::\d{2})?\.\d{3}/g;
+  const pastedTimestamps = [...pastedText.matchAll(timestampPattern)].map(match => match[0]);
+
+  pastedTimestamps.forEach((timestamp, index) => {
+    const occurrence = [...source.slice(0, insertionStart).matchAll(
+      new RegExp(timestamp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")
+    )].length + index;
+    pendingAddedEpicxTimestamps.push({ timestamp, occurrence });
+  });
+}
+
+function adjustPendingAddedEpicxTimestamps(source) {
+  if (pendingAddedEpicxTimestamps.length === 0) return source;
+
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const seen = new Map();
+  const timestampLines = [];
+
+  lines.forEach((line, index) => {
+    const match = line.match(/^(\s*)(\d{2}:\d{2}(?::\d{2})?\.\d{3})(\s*(?:-->.*)?\s*)$/);
+    if (!match) return;
+    const occurrence = seen.get(match[2]) || 0;
+    seen.set(match[2], occurrence + 1);
+    timestampLines.push({ index, timestamp: match[2], occurrence, match });
+  });
+
+  pendingAddedEpicxTimestamps.forEach(({ timestamp, occurrence }) => {
+    const target = timestampLines.find(item => item.timestamp === timestamp && item.occurrence === occurrence);
+    if (!target) return;
+
+    const previous = timestampLines
+      .filter(item => item.index < target.index)
+      .at(-1);
+    if (!previous) return;
+
+    const currentMs = timestampToMilliseconds(target.timestamp);
+    const previousMs = timestampToMilliseconds(previous.timestamp);
+    if (currentMs >= previousMs + 2000) return;
+
+    const adjusted = millisecondsToTimestamp(previousMs + 2000, target.timestamp);
+    lines[target.index] = `${target.match[1]}${adjusted}${target.match[3]}`;
+    target.timestamp = adjusted;
+  });
+
+  pendingAddedEpicxTimestamps = [];
+  return lines.join("\n");
+}
+
 function resyncEpicxEntryIndexes(source, entries) {
   if (!entries || entries.length === 0) return source;
 
@@ -1274,7 +1343,8 @@ numericOrderingBtn?.addEventListener("click", async () => {
   }
 
   const entries = result.document.body?.entries || [];
-  const normalized = resyncEpicxEntryIndexes(editor.value, entries);
+  const timestampAdjusted = adjustPendingAddedEpicxTimestamps(editor.value);
+  const normalized = resyncEpicxEntryIndexes(timestampAdjusted, entries);
 
   if (normalized !== editor.value) {
     const selectionStart = editor.selectionStart;
@@ -2896,6 +2966,14 @@ editor.addEventListener("beforeinput", (event) => {
   }
 
   const scrollTop = editor.scrollTop;
+
+  if (
+    event.inputType === "insertFromPaste" &&
+    event.data &&
+    editor.selectionStart === editor.selectionEnd
+  ) {
+    rememberAddedEpicxTimestamps(editor.value, editor.selectionStart, event.data);
+  }
 
   pushUndoSnapshot();
 
