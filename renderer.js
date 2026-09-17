@@ -43,7 +43,11 @@ function setEditMetadataBtnIcon(active) {
 }
 
 const AUTHOR_KEY_PREF = "epic-author-key-preference";
-const AUTHOR_KEY_CORRECTIONS = "epic-author-key-corrections";
+const AUTHOR_KEY_HISTORY = "epic-author-key-history";
+const AUTHOR_VALUE_PREF = "epic-author-value-preference";
+const AUTHOR_VALUE_HISTORY = "epic-author-value-history";
+const AUTHOR_HISTORY_SIZE = 3;
+const AUTHOR_KEYS = ["Creator", "Author", "Artist"];
 
 let ghostHeaderVisible = false;
 let lastEpicValidationResult = null;
@@ -220,16 +224,69 @@ function observeStatusChanges() {
 
 renderStatus();
 
+function readRecentHistory(storageKey) {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey) || "[]");
+    return Array.isArray(value) ? value.slice(-AUTHOR_HISTORY_SIZE) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberRepeatedPreference(historyKey, preferenceKey, value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return;
+
+  const history = readRecentHistory(historyKey);
+  history.push(normalized);
+  const recent = history.slice(-AUTHOR_HISTORY_SIZE);
+  localStorage.setItem(historyKey, JSON.stringify(recent));
+
+  if (
+    recent.length === AUTHOR_HISTORY_SIZE &&
+    recent.every(item => item === normalized)
+  ) {
+    localStorage.setItem(preferenceKey, normalized);
+  }
+}
+
 function getPreferredAuthorKey() {
-  return localStorage.getItem(AUTHOR_KEY_PREF) || "Creator";
+  return localStorage.getItem(AUTHOR_KEY_PREF) || "Author";
+}
+
+function getPreferredAuthorValue() {
+  return localStorage.getItem(AUTHOR_VALUE_PREF) || "";
+}
+
+function getHeaderAuthorship(source = editor.value) {
+  const match = String(source || "").match(
+    /^---\s*\n[\s\S]*?^\s*(Creator|Artist|Author):[ \t]*(.*)$/m
+  );
+
+  return match
+    ? { key: match[1], value: match[2].trim() }
+    : null;
+}
+
+function rememberCompletedHeaderValue(source = editor.value) {
+  const authorship = getHeaderAuthorship(source);
+  if (!authorship?.value) return;
+
+  // EPIC Writer learns the credit value when header authoring is completed.
+  rememberRepeatedPreference(
+    AUTHOR_VALUE_HISTORY,
+    AUTHOR_VALUE_PREF,
+    authorship.value
+  );
 }
 
 function getHeaderStub() {
   const authorKey = getPreferredAuthorKey();
+  const authorValue = getPreferredAuthorValue();
 
   return `---
 Title: Untitled
-${authorKey}: 
+${authorKey}: ${authorValue}
 ---
 
 `;
@@ -405,6 +462,8 @@ function moveToNextHeaderValue() {
   const headerCloseStart = text.indexOf("\n---", 3);
 
   if (headerCloseStart !== -1 && cursor <= headerCloseStart + 4) {
+    rememberCompletedHeaderValue();
+
     const afterHeader =
       headerCloseStart + "\n---".length;
 
@@ -586,34 +645,121 @@ function showConfirmModal({
 }
 
 function rememberAuthorKeyCorrection() {
-  const match = editor.value.match(/^---\s*\n[\s\S]*?\n(Creator|Artist|Author):/m);
+  // Preference learning happens when header entry is completed, rather than
+  // on every keystroke. Kept as a no-op because older call sites still invoke it.
+}
+
+function replaceHeaderAuthorKey(nextKey) {
+  if (!AUTHOR_KEYS.includes(nextKey)) return false;
+
+  const text = editor.value;
+  const headerEnd = text.indexOf("\n---", 3);
+  if (headerEnd === -1) return false;
+
+  const header = text.slice(0, headerEnd);
+  const match = /^(Creator|Artist|Author):/m.exec(header);
+  if (!match) return false;
+
+  const keyStart = match.index;
+  const keyEnd = keyStart + match[1].length;
+  const selectionStart = editor.selectionStart;
+  const selectionEnd = editor.selectionEnd;
+  const delta = nextKey.length - match[1].length;
+
+  pushUndoSnapshot();
+  editor.value = text.slice(0, keyStart) + nextKey + text.slice(keyEnd);
+
+  const adjust = position => position > keyEnd ? position + delta : position;
+  editor.setSelectionRange(adjust(selectionStart), adjust(selectionEnd));
+  editor.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType: "insertReplacementText"
+  }));
+
+  return true;
+}
+
+let authorKeyPicker = null;
+
+function closeAuthorKeyPicker() {
+  authorKeyPicker?.remove();
+  authorKeyPicker = null;
+}
+
+function showAuthorKeyPicker(event, currentKey) {
+  closeAuthorKeyPicker();
+
+  const picker = document.createElement("div");
+  picker.setAttribute("role", "menu");
+  picker.style.cssText = [
+    "position:fixed",
+    `left:${event.clientX}px`,
+    `top:${event.clientY}px`,
+    "z-index:10000",
+    "display:flex",
+    "gap:4px",
+    "padding:6px",
+    "border:1px solid rgba(127,127,127,.45)",
+    "border-radius:7px",
+    "background:var(--panel-bg, #202124)",
+    "box-shadow:0 6px 20px rgba(0,0,0,.25)"
+  ].join(";");
+
+  AUTHOR_KEYS
+    .filter(key => key !== currentKey)
+    .forEach(key => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = key;
+    button.style.cssText = "padding:4px 8px;cursor:pointer";
+    button.addEventListener("mousedown", e => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    button.addEventListener("click", () => {
+      if (replaceHeaderAuthorKey(key)) {
+        // EPIC Writer records the label when the user explicitly selects it.
+        rememberRepeatedPreference(
+          AUTHOR_KEY_HISTORY,
+          AUTHOR_KEY_PREF,
+          key
+        );
+      }
+      closeAuthorKeyPicker();
+      editor.focus();
+    });
+    picker.appendChild(button);
+  });
+
+  document.body.appendChild(picker);
+  authorKeyPicker = picker;
+
+  setTimeout(() => {
+    const closeOnOutsidePointer = event => {
+      if (authorKeyPicker?.contains(event.target)) return;
+      closeAuthorKeyPicker();
+      document.removeEventListener("mousedown", closeOnOutsidePointer, true);
+    };
+
+    document.addEventListener("mousedown", closeOnOutsidePointer, true);
+  }, 0);
+}
+
+function maybeShowAuthorKeyPicker(event) {
+  const text = editor.value;
+  const cursor = editor.selectionStart;
+  const headerEnd = text.indexOf("\n---", 3);
+  if (headerEnd === -1 || cursor > headerEnd) return;
+
+  const header = text.slice(0, headerEnd);
+  const match = /^(Creator|Artist|Author):/m.exec(header);
   if (!match) return;
 
-  const key = match[1];
-  const currentPreferred = getPreferredAuthorKey();
+  const keyStart = match.index;
+  const keyEnd = keyStart + match[1].length;
+  if (cursor < keyStart || cursor > keyEnd) return;
 
-  if (key === currentPreferred) return;
-
-  let corrections = {};
-
-  try {
-    corrections = JSON.parse(
-      localStorage.getItem(AUTHOR_KEY_CORRECTIONS) || "{}"
-    );
-  } catch {
-    corrections = {};
-  }
-
-  corrections[key] = (corrections[key] || 0) + 1;
-
-  localStorage.setItem(
-    AUTHOR_KEY_CORRECTIONS,
-    JSON.stringify(corrections)
-  );
-
-  if (corrections[key] >= 3) {
-    localStorage.setItem(AUTHOR_KEY_PREF, key);
-  }
+  showAuthorKeyPicker(event, match[1]);
 }
 
 function updateHeaderState() {
@@ -1403,9 +1549,12 @@ function createStarterEpicx(filePath) {
     .replace(/\.epic\.(wav|mp3)$/i, "")
     .replace(/\.(wav|mp3)$/i, "");
 
+  const authorKey = getPreferredAuthorKey();
+  const authorValue = getPreferredAuthorValue();
+
   return `---
 Title: ${baseName}
-Creator:
+${authorKey}: ${authorValue}
 ---
 
 `;
@@ -2830,6 +2979,7 @@ async function saveCurrentTextFile({
   sourceHadContent =
     editor.value.trim().length > 0;
 
+
   if (updateLinkedAudio && linkedAudioPath) {
     const audioResult =
       await window.EpicInspector.storeInAudio({
@@ -2886,6 +3036,7 @@ async function performSave() {
       sourceEditorText = editor.value;
       sourceHadContent =
         editor.value.trim().length > 0;
+
 
       filePathEl.textContent = getDisplayName(currentFilePath);
 
@@ -2944,6 +3095,7 @@ editor.addEventListener("input", requestEditorHighlightSync);
 editor.addEventListener("keyup", requestEditorHighlightSync);
 editor.addEventListener("mouseup", requestEditorHighlightSync);
 editor.addEventListener("click", requestEditorHighlightSync);
+editor.addEventListener("click", maybeShowAuthorKeyPicker);
 editor.addEventListener("select", requestEditorHighlightSync);
 
 editor.addEventListener("scroll", requestEditorHighlightSync);
