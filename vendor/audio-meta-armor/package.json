@@ -1,0 +1,24 @@
+{
+  "name": "audio-meta-armor",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "description": "Dependency-free audio metadata preservation verification and safe file replacement",
+  "license": "UNLICENSED",
+  "files": [
+    "index.js",
+    "wav.js",
+    "README.md",
+    "CHANGELOG.md",
+    "test.js"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./wav": "./wav.js"
+  }
+}
