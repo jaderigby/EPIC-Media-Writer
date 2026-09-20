@@ -33,6 +33,75 @@ function isSavedEpicxProject() {
   return /\.epicx$/i.test(currentFilePath || "");
 }
 
+function isWavProjectDocument() {
+  return /\.wav$/i.test(currentFilePath || '');
+}
+function canLinkStudioTiming() {
+  return isSavedEpicxProject() || isWavProjectDocument();
+}
+let isProjectSaveInProgress = false;
+
+// Timing-only polls never write the WAV. Studio retains its session save policy.
+function receiveStudioProject(snapshot, { initial = false } = {}) {
+  const project = snapshot?.project;
+  if (!project || project.filePath !== currentFilePath ||
+      (!initial && project.session !== studioTimingLink?.session)) {
+    if (!initial) unlinkStudioTiming({ silent: true });
+    statusEl.textContent = 'Open this same project in Studio, then link it again. Your Writer edits have been kept.';
+    return false;
+  }
+  const result = window.EpicProjectTextMerge.merge(sourceEditorText, editor.value, project.text);
+  if (!result.ok) {
+    statusEl.textContent = result.message;
+    return false;
+  }
+  const start = editor.selectionStart, end = editor.selectionEnd, scroll = editor.scrollTop;
+  if (result.text !== editor.value) {
+    replaceEditorTextWithManualUndo(result.text);
+    editor.setSelectionRange(Math.min(start, result.text.length), Math.min(end, result.text.length));
+    editor.scrollTop = scroll;
+    scheduleEpicValidation();
+  }
+  sourceEditorText = project.text;
+  sourceHadContent = !!project.text.trim();
+  studioTimingLink = {
+    kind: 'project', filePath: project.filePath, session: project.session,
+    contextRevision: snapshot.context?.contextRevision ?? null,
+    timingFingerprint: snapshot.timingFingerprint || '', waiting: false
+  };
+  if (initial) statusEl.textContent = 'Linked EPIC Project to Studio. Timing updates here; Save sends your text edits to Studio.';
+  updateHeaderState();
+  saveSessionState();
+  return true;
+}
+
+async function saveLinkedStudioProject() {
+  if (isProjectSaveInProgress) return;
+  isProjectSaveInProgress = true;
+  const link = { ...studioTimingLink };
+  const submitted = editor.value;
+  try {
+    statusEl.textContent = 'Saving linked project in Studio...';
+    const result = await window.EpicInspector.saveStudioProject({
+      filePath: link.filePath, session: link.session,
+      baseText: sourceEditorText, text: submitted
+    });
+    if (currentFilePath !== link.filePath || studioTimingLink?.session !== link.session) return;
+    if (!result?.ok) {
+      statusEl.textContent = result?.message || 'Studio could not save. Your Writer edits have been kept.';
+      return;
+    }
+    // Keep any edits typed while the save was in flight.
+    const merged = window.EpicProjectTextMerge.merge(submitted, editor.value, result.project.text);
+    if (merged.ok && merged.text !== editor.value) replaceEditorTextWithManualUndo(merged.text);
+    sourceEditorText = result.project.text;
+    sourceHadContent = !!sourceEditorText.trim();
+    if (currentMetadata) currentMetadata.epicx = sourceEditorText;
+    statusEl.textContent = merged.ok ? 'Project saved in Studio.' : merged.message;
+    scheduleEpicValidation(); updateHeaderState(); saveSessionState();
+  } finally { isProjectSaveInProgress = false; }
+}
+
 function setEditMetadataBtnIcon(active) {
   if (!editMetadataBtn) return;
   editMetadataBtn.innerHTML = `
@@ -830,7 +899,7 @@ function getDisplayName(filePath) {
 }
 
 function updateStudioTimingMenuState() {
-  const isAvailable = isSavedEpicxProject();
+  const isAvailable = canLinkStudioTiming();
 
   if (!isAvailable && studioTimingLink) {
     studioTimingLink = null;
@@ -840,7 +909,8 @@ function updateStudioTimingMenuState() {
 
   window.EpicInspector?.updateStudioTimingMenuState?.({
     available: isAvailable,
-    linked: Boolean(studioTimingLink)
+    linked: Boolean(studioTimingLink),
+    project: isWavProjectDocument()
   });
 }
 
@@ -1013,7 +1083,12 @@ async function notifyStudioOfSavedEpicx() {
 }
 
 async function linkStudioTiming() {
-  if (!isSavedEpicxProject()) return;
+  if (!canLinkStudioTiming()) return;
+  if (isWavProjectDocument()) {
+    const response = await window.EpicInspector.getStudioTimingSnapshot();
+    if (receiveStudioProject(getStudioTimingSnapshotPayload(response), { initial: true })) startStudioTimingPolling();
+    return;
+  }
 
   let parseResult = null;
 
@@ -1083,7 +1158,7 @@ async function linkStudioTiming() {
 }
 
 async function syncStudioTimingFromStudio({ quiet = false } = {}) {
-  if (!studioTimingLink || isStudioTimingSyncInProgress) return;
+  if (!studioTimingLink || isStudioTimingSyncInProgress || isProjectSaveInProgress) return;
 
   isStudioTimingSyncInProgress = true;
 
@@ -1097,6 +1172,12 @@ async function syncStudioTimingFromStudio({ quiet = false } = {}) {
           snapshot?.message ||
           "EPIC Studio timing is not available.";
       }
+      return;
+    }
+
+    if (!studioTimingLink || isProjectSaveInProgress) return;
+    if (studioTimingLink.kind === 'project') {
+      receiveStudioProject(payload);
       return;
     }
 
@@ -1247,7 +1328,7 @@ function restoreSessionState() {
     updateHeaderState();
     updateStudioTimingMenuState();
 
-    if (studioTimingLink && isSavedEpicxProject()) {
+    if (studioTimingLink && canLinkStudioTiming()) {
       startStudioTimingPolling();
     }
   } catch (err) {
@@ -3010,6 +3091,10 @@ async function saveCurrentTextFile({
 
 async function performSave() {
   try {
+    if (studioTimingLink?.kind === 'project') {
+      await saveLinkedStudioProject();
+      return;
+    }
     statusEl.textContent = "Saving...";
 
     const isTextFile = /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");

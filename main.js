@@ -121,12 +121,14 @@ function previewEpicLines(value, maxLines = 10) {
 function updateStudioTimingMenuState(state = {}) {
   const nextState = {
     available: Boolean(state.available),
-    linked: Boolean(state.linked)
+    linked: Boolean(state.linked),
+    project: Boolean(state.project)
   };
 
   if (
     nextState.available === studioTimingMenuState.available &&
-    nextState.linked === studioTimingMenuState.linked
+    nextState.linked === studioTimingMenuState.linked &&
+    nextState.project === studioTimingMenuState.project
   ) {
     return;
   }
@@ -170,9 +172,9 @@ function createApplicationMenu(win) {
           submenu: [
             {
               id: "studioTimingLink",
-              label: studioTimingMenuState.linked
-                ? "Unlink EPICX (Studio) Timing"
-                : "Link EPICX (Studio) Timing...",
+              label: studioTimingMenuState.project
+                ? (studioTimingMenuState.linked ? "Unlink EPIC Project from Studio" : "Link EPIC Project to Studio...")
+                : (studioTimingMenuState.linked ? "Unlink EPICX (Studio) Timing" : "Link EPICX (Studio) Timing..."),
               click: () => {
                 win.webContents.send("studio-timing:menu-action");
               }
@@ -570,6 +572,22 @@ ipcMain.handle("studio-timing:update-menu-state", async (_event, state) => {
 
 ipcMain.handle("studio-timing:get-snapshot", async () => {
   return await requestStudioTimingSnapshot();
+});
+
+// Linked project lyrics are saved by Studio, the sole WAV writer for this link.
+ipcMain.handle('studio-project:save', async (_event, payload) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch(getStudioBridgeUrl('/media-writer/project-edit'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), signal: controller.signal
+    });
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    return { ok: false, reason: 'unavailable', message: 'Studio could not confirm the save. Your Writer edits have been kept. Reconnect and retry saving.' };
+  } finally { clearTimeout(timeout); }
 });
 
 ipcMain.handle("studio-timing:notify-saved", async (_event, payload) => {

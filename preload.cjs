@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("EpicInspector", {
+  saveStudioProject: payload => ipcRenderer.invoke("studio-project:save", payload),
   openMedia: () => ipcRenderer.invoke("open-media"),
   saveMedia: (payload) => ipcRenderer.invoke("save-media", payload),
   saveMetadata: (payload) => ipcRenderer.invoke("save-metadata", payload),
