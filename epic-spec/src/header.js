@@ -277,7 +277,7 @@ function parseGenerationBlock(cursor) {
         break;
       }
       case "UseStyle":
-        fields.UseStyle = Number.parseInt(value.trim(), 10);
+        fields.UseStyle = /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN;
         break;
       case "Persona":
         fields.Persona = value;
@@ -331,72 +331,41 @@ function parseStyles(cursor, firstValue, lineNumber) {
   const firstNext = cursor.peek();
 
   // numbered mode only when there is no inline value
-  if (lines.length === 0 && firstNext && /^\s*\d+\.\s+/.test(firstNext)) {
+  if (lines.length === 0 && firstNext && /^\s*\d+\.(?:\s|$)/.test(firstNext)) {
     const options = [];
+    let separatorBefore = 0;
 
     while (!cursor.eof()) {
+      const startLineNumber = cursor.lineNumber();
       const startLine = cursor.peek();
-      if (startLine === null) break;
-
-      const startTrimmed = startLine.trim();
-      const startMatch = startTrimmed.match(/^(\d+)\.\s+(.*)$/);
-      if (!startMatch) break;
+      const startMatch = startLine?.trimStart().match(/^(\d+)\. (.*)$/);
+      // Recover malformed markers as options so they cannot disappear into text.
+      const recoveryMatch = startMatch || startLine?.trim().match(/^(\d+)\.(?:\s+(.*))?$/);
+      if (!recoveryMatch) break;
 
       cursor.next();
-
-      const optionIndex = Number.parseInt(startMatch[1], 10);
-      const optionLines = [startMatch[2]];
-
-      while (!cursor.eof()) {
-        const nextLine = cursor.peek();
-        if (nextLine === null) break;
-
-        const nextTrimmed = nextLine.trim();
-
-        if (nextTrimmed === "---") break;
-        if (nextTrimmed.startsWith("[") && nextTrimmed !== "[Generation]") break;
-        if (/^[A-Za-z]+:\s*/.test(nextLine)) break;
-
-        if (nextTrimmed === "") {
-          cursor.next();
-
-          const afterBlank = cursor.peek();
-          if (afterBlank === null) break;
-
-          const afterBlankTrimmed = afterBlank.trim();
-
-          if (/^\d+\.\s+/.test(afterBlankTrimmed)) {
-            break;
-          }
-
-          optionLines.push("");
-          continue;
-        }
-
-        optionLines.push(cursor.next());
+      if (!startMatch) {
+        issues.push(makeIssue("INVALID_STYLE_OPTION_MARKER", "Style options must start with an integer followed by a period and a space.", startLineNumber));
       }
-
       options.push({
-        index: optionIndex,
-        value: optionLines.join("\n"),
-        lines: optionLines,
+        index: Number(recoveryMatch[1]),
+        value: recoveryMatch[2] || "",
+        lines: [recoveryMatch[2] || ""],
+        separatorBefore,
+        loc: { startLine: startLineNumber },
       });
-    }
-
-    if (options.length === 0) {
-      issues.push(
-        makeIssue(
-          "EMPTY_STYLES",
-          "Styles must not be empty.",
-          lineNumber,
-        ),
-      );
+      separatorBefore = 0;
+      while (cursor.peek() !== null && cursor.peek().trim() === "") {
+        cursor.next();
+        separatorBefore += 1;
+      }
     }
 
     return {
       styles: {
         mode: "multiple",
         options,
+        separatorAfter: separatorBefore,
       },
       issues,
     };
@@ -479,7 +448,10 @@ export function stringifyHeader(header) {
         lines.push(`Styles: ${g.Styles.value}`);
       } else {
         lines.push("Styles:");
-        for (const option of g.Styles.options) lines.push(`${option.index}. ${option.value}`);
+        g.Styles.options.forEach((option) => {
+          lines.push(`${option.index}. ${option.value}`);
+          lines.push("");
+        });
       }
     }
     if (g.UseStyle !== undefined) push("UseStyle", g.UseStyle);
