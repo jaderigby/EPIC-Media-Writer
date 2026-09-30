@@ -2949,7 +2949,7 @@ openBtn.addEventListener("click", async () => {
   }
 });
 
-tocToggleBtn?.addEventListener("click", () => {
+function toggleTocDrawer() {
   const willOpen =
     !tocDrawer?.classList.contains("open");
 
@@ -2958,10 +2958,70 @@ tocToggleBtn?.addEventListener("click", () => {
   }
 
   tocDrawer?.classList.toggle("open", willOpen);
-});
+}
+
+tocToggleBtn?.addEventListener("click", toggleTocDrawer);
 
 tocCloseBtn?.addEventListener("click", () => {
   tocDrawer?.classList.remove("open");
+});
+
+// Hotkeys (when not typing and no dialog is open):
+//   n = toggle the section drawer (navigation)
+//   t = focus the editor (text)
+function isTypingTarget(node) {
+  if (!(node instanceof HTMLElement)) return false;
+  return (
+    node.isContentEditable ||
+    node.tagName === "INPUT" ||
+    node.tagName === "TEXTAREA" ||
+    node.tagName === "SELECT"
+  );
+}
+
+// True when a single-key hotkey should not fire: modifiers held, key repeat,
+// the person is typing, or a dialog is open.
+function shouldIgnoreHotkey(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) return true;
+  if (event.repeat || event.defaultPrevented) return true;
+  if (isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return true;
+  if (emotiveState) return true;
+  if (!document.getElementById("confirmModal")?.classList.contains("hidden")) return true;
+  return false;
+}
+
+window.addEventListener("keydown", (event) => {
+  const key = String(event.key || "").toLowerCase();
+  if (key !== "n" && key !== "t") return;
+  if (shouldIgnoreHotkey(event)) return;
+
+  if (key === "n") {
+    // "n" = navigation: toggle the section drawer.
+    if (!tocDrawer || tocDrawer.classList.contains("is-hidden")) return;
+
+    event.preventDefault();
+    toggleTocDrawer();
+    return;
+  }
+
+  // "t" = text: put the cursor back in the editor.
+  if (!editor || editor.disabled || editor.offsetParent === null) return;
+
+  event.preventDefault();
+  editor.focus();
+});
+
+// Escape leaves whatever text field has focus (including the editor), so
+// single-key hotkeys like "n" work again. The recipe popup and the confirm
+// dialog handle Escape themselves.
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (emotiveState) return;
+  if (!document.getElementById("confirmModal")?.classList.contains("hidden")) return;
+
+  const active = document.activeElement;
+  if (isTypingTarget(active)) active.blur();
 });
 
 storeAudioBtn?.addEventListener("click", async () => {
