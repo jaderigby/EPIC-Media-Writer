@@ -2159,6 +2159,13 @@ function renderSectionToc() {
         <span class="toc-item-label">
           ${formatTocLabel(entry.label)}
         </span>
+        ${parseSectionLabelLine(entry.label) ? `<span
+          class="toc-item-more"
+          role="button"
+          tabindex="0"
+          title="Emotive recipes"
+          aria-label="Emotive recipes for this section"
+        ><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></span>` : ""}
       </button>
     `).join("");
 
@@ -2166,6 +2173,21 @@ function renderSectionToc() {
       ? `<div class="toc-group">${items}</div>`
       : items;
   }).join("");
+
+  tocList.querySelectorAll(".toc-item-more").forEach((more) => {
+    const openMore = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const lineIndex = Number(more.closest(".toc-item").dataset.lineIndex);
+      openEmotiveRecipeDialog(lineIndex);
+    };
+
+    more.addEventListener("click", openMore);
+    more.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") openMore(event);
+    });
+    more.addEventListener("keyup", (event) => event.stopPropagation());
+  });
 
   tocList.querySelectorAll(".toc-item").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3218,6 +3240,657 @@ editor.addEventListener("beforeinput", (event) => {
     editor.scrollTop = scrollTop;
   });
 });
+
+/* ==========================================================================
+   Emotive recipes (section drawer "more" popup)
+   Vocabulary, axes, definitions and syntax rules come from
+   "epic Module: Emotives 2.1".
+
+   A recipe is written into the section label's instruction block (shorthand):
+     [Chorus {{energetic, swell, strong}}]
+   Shorthand rules: emotives first, prominence modifiers last (arcs, when
+   present, come after modifiers). Arcs are not composed in this pass, but
+   existing arcs on a label are preserved.
+   ========================================================================== */
+
+const EMOTIVE_LAYERS = [
+  {
+    name: "Movement",
+    axes: [
+      { name: "Direction", pair: ["rise", "fall"] },
+      { name: "Collection", pair: ["converge", "drift"] }
+    ]
+  },
+  {
+    name: "Dynamics",
+    axes: [
+      { name: "Intensity", pair: ["swell", "decay"] },
+      { name: "Energy", pair: ["energetic", "calm"] }
+    ]
+  },
+  {
+    name: "Perception",
+    axes: [
+      { name: "Atmosphere", pair: ["light", "dark"] },
+      { name: "Distortion", pair: ["warp", "blur"] },
+      { name: "Visibility", pair: ["reveal", "fade"] },
+      { name: "Micro-motion", pair: ["smooth", "turbulent"] },
+      { name: "Timing", pair: ["tight", "loose"] },
+      { name: "Timing", pair: ["pulse", "flash"] },
+      { name: "Expressive space", pair: ["open", "contained"] }
+    ]
+  }
+];
+
+// Focus modifiers: not paired axes. They mark relative semantic importance.
+const EMOTIVE_MODIFIERS = ["strong", "emphasis", "diminished"];
+
+const EMOTIVE_DEFINITIONS = {
+  rise: "Directional upward progression in motion or intensity.",
+  fall: "Directional downward progression in motion or intensity.",
+  converge: "Movement directed toward a shared focal point.",
+  drift: "Motion without clear directional intent; ambient or wandering.",
+  swell: "Gradual accumulation of intensity, density, or presence.",
+  decay: "Gradual reduction or dispersal of intensity, density, or presence.",
+  energetic: "High activity level with vigorous or frequent motion.",
+  calm: "Low activity level with restrained or minimal motion.",
+  light: "Airy, enlightened, bright, or elevated atmospheric tone.",
+  dark: "Heavy, mysterious, or weighty atmospheric tone.",
+  warp: "Distortion that alters meaning or form.",
+  blur: "Distortion that reduces clarity or sharpness.",
+  reveal: "Transition into visibility or perceptual awareness.",
+  fade: "Transition out of visibility or perceptual awareness.",
+  smooth: "Uniform motion with minimal irregularity or turbulence.",
+  turbulent: "Irregular or chaotic motion with unpredictable variation.",
+  tight: "Motion closely aligned with timing cues or rhythmic events.",
+  loose: "Motion that stretches or relaxes around timing cues.",
+  pulse: "Periodic or rhythmic repetition over time.",
+  flash: "A sudden, instantaneous perceptual event.",
+  open: "Expressive room becoming more expansive or open.",
+  contained: "Expressive room becoming more restrictive or contained.",
+  strong: "Designates an element as the semantic anchor of the moment.",
+  emphasis: "Increases the perceptual prominence of an element relative to surrounding elements.",
+  diminished: "Reduces the perceptual prominence of an element relative to surrounding elements."
+};
+
+// What a term displaces when picked: its paired opposite; diminished is the
+// opposite of the two prominence-raising modifiers (per their definitions).
+const EMOTIVE_CONFLICTS = (() => {
+  const map = {};
+  EMOTIVE_LAYERS.forEach((layer) => layer.axes.forEach(({ pair }) => {
+    map[pair[0]] = [pair[1]];
+    map[pair[1]] = [pair[0]];
+  }));
+  map.strong = ["diminished"];
+  map.emphasis = ["diminished"];
+  map.diminished = ["strong", "emphasis"];
+  return map;
+})();
+
+const EMOTIVE_VOCAB = new Set(Object.keys(EMOTIVE_DEFINITIONS));
+const SECTION_LABEL_LINE_RE = /^(\s*)\[([^{\]]*?)\s*(?:\{\{([\s\S]*?)\}\})?\s*\](\s*)$/;
+
+// Recipes composed this session (they stay available even if not yet used).
+let emotiveSessionRecipes = [];
+let emotiveState = null;
+
+function installEmotiveRecipeStyles() {
+  const css = `
+.toc-item { position: relative; padding-right: 34px; }
+.toc-item-more {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; opacity: .55; cursor: pointer;
+}
+.toc-item-more:hover, .toc-item-more:focus-visible { opacity: 1; background: rgba(127,127,127,.28); outline: none; }
+
+.emo-overlay {
+  position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.5);
+  --emo-bg: #1f2126; --emo-fg: #e8e9ec; --emo-border: rgba(255,255,255,.16);
+  --emo-accent: #7c9cff; --emo-accent-fg: #0d1020; --emo-muted: rgba(232,233,236,.62);
+}
+.emo-dialog {
+  width: min(600px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+  background: var(--emo-bg); color: var(--emo-fg); border: 1px solid var(--emo-border);
+  border-radius: 12px; box-shadow: 0 18px 60px rgba(0,0,0,.5); font-size: 14px;
+}
+.emo-header, .emo-footer { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
+.emo-header { justify-content: space-between; border-bottom: 1px solid var(--emo-border); }
+.emo-footer { justify-content: flex-end; border-top: 1px solid var(--emo-border); }
+.emo-title { font-weight: 600; }
+.emo-title small { font-weight: 400; color: var(--emo-muted); margin-left: 6px; }
+.emo-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.emo-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--emo-muted); }
+.emo-layer-name { margin: 10px 0 6px; font-size: 11px; color: var(--emo-muted); }
+.emo-layer-name:first-of-type { margin-top: 0; }
+.emo-hint, .emo-empty { color: var(--emo-muted); font-size: 13px; }
+.emo-text-row { display: flex; gap: 8px; }
+.emo-text-input { flex: 1; min-width: 0; font: inherit; color: inherit; background: rgba(127,127,127,.12);
+  border: 1px solid var(--emo-border); border-radius: 8px; padding: 6px 10px; }
+.emo-text-input:focus-visible { outline: 2px solid var(--emo-accent); outline-offset: 1px; }
+.emo-text-error { margin-top: 6px; color: #ff8a8a; font-size: 12px; }
+.emo-text-error:empty { display: none; }
+
+.emo-btn, .emo-x {
+  font: inherit; color: inherit; background: transparent; border: 1px solid var(--emo-border);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+.emo-btn:hover:not(:disabled), .emo-x:hover { background: rgba(127,127,127,.2); }
+.emo-btn-primary { background: var(--emo-accent); color: var(--emo-accent-fg); border-color: var(--emo-accent); font-weight: 600; }
+.emo-btn-primary:hover:not(:disabled) { background: var(--emo-accent); filter: brightness(1.08); }
+.emo-x { border: none; padding: 4px 8px; font-size: 18px; line-height: 1; }
+.emo-dialog button:disabled { opacity: .4; cursor: not-allowed; }
+.emo-dialog button:focus-visible { outline: 2px solid var(--emo-accent); outline-offset: 2px; }
+
+.emo-pairs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.emo-pair { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.emo-mods { max-width: 100%; }
+.emo-choice {
+  font: inherit; color: inherit; background: transparent; border: 1px solid var(--emo-border);
+  padding: 6px 8px; cursor: pointer;
+}
+.emo-choice:not(:last-child) { border-right-width: 0; }
+.emo-choice:first-child { border-radius: 8px 0 0 8px; }
+.emo-choice:last-child { border-radius: 0 8px 8px 0; }
+.emo-choice:hover:not(:disabled) { background: rgba(127,127,127,.2); }
+.emo-choice.is-on { background: var(--emo-accent); color: var(--emo-accent-fg); border-color: var(--emo-accent); font-weight: 600; }
+
+.emo-container {
+  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px;
+  border: 1px solid var(--emo-border); border-radius: 10px;
+}
+.emo-container.is-draft { border: 1px dashed var(--emo-accent); }
+.emo-items { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.emo-pill { padding: 2px 9px; border-radius: 999px; background: rgba(127,127,127,.25); font-size: 12px; }
+.emo-source { font-size: 11px; color: var(--emo-muted); white-space: nowrap; }
+.emo-done { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0;
+  border-radius: 8px; border: 1px solid var(--emo-accent); background: transparent; color: var(--emo-accent); cursor: pointer; }
+.emo-done:hover:not(:disabled) { background: var(--emo-accent); color: var(--emo-accent-fg); }
+.emo-recipes { display: flex; flex-direction: column; gap: 8px; }
+.emo-recipe { width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; cursor: pointer; }
+.emo-recipe.is-selected { border-color: var(--emo-accent); box-shadow: 0 0 0 1px var(--emo-accent); background: rgba(124,156,255,.14); }
+`;
+  try {
+    if ("adoptedStyleSheets" in document && typeof CSSStyleSheet !== "undefined") {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      return;
+    }
+  } catch (_) { /* fall through to <style> */ }
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+/* ---------- parsing helpers ---------- */
+
+function splitInstructionItems(inner) {
+  const items = [];
+  let current = "";
+  let inLiteral = false;
+
+  for (const ch of String(inner || "")) {
+    if (ch === "`") inLiteral = !inLiteral;
+    if (ch === "," && !inLiteral) {
+      items.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  items.push(current);
+
+  return items.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+
+// Returns null for anything that isn't an ordinary section label (e.g. freeflow labels).
+function parseSectionLabelLine(line) {
+  const match = String(line || "").match(SECTION_LABEL_LINE_RE);
+  if (!match || !match[2].trim()) return null;
+
+  return {
+    indent: match[1],
+    name: match[2].trim(),
+    items: match[3] ? splitInstructionItems(match[3]) : [],
+    trailing: match[4]
+  };
+}
+
+function isModifierTerm(item) {
+  return EMOTIVE_MODIFIERS.includes(String(item).toLowerCase());
+}
+
+// A standalone emotive or modifier (shorthand form).
+function isEmotiveItem(item) {
+  return EMOTIVE_VOCAB.has(String(item).toLowerCase());
+}
+
+// Individual syntax such as "energetic--strong" or "swell--arc-lift".
+function isCompoundEmotiveItem(item) {
+  const text = String(item);
+  return text.includes("--") && isEmotiveItem(text.split("--")[0]);
+}
+
+function isArcItem(item) {
+  return /^arc(-[a-z0-9-]+)?$/i.test(String(item)) && !String(item).includes("--");
+}
+
+// Emotives first (in the order given), prominence modifiers last.
+function orderEmotiveRecipe(items) {
+  return [
+    ...items.filter((item) => !isModifierTerm(item)),
+    ...items.filter(isModifierTerm)
+  ];
+}
+
+function emotiveRecipeKey(items) {
+  return items.map((item) => item.toLowerCase()).sort().join("|");
+}
+
+function collectFileEmotiveRecipes() {
+  const seen = new Map();
+
+  editor.value.split("\n").forEach((line) => {
+    const parsed = parseSectionLabelLine(line);
+    if (!parsed) return;
+
+    // Individual (per-emotive) syntax can't be reused as a shorthand recipe.
+    if (parsed.items.some(isCompoundEmotiveItem)) return;
+
+    const items = orderEmotiveRecipe(
+      parsed.items.filter(isEmotiveItem).map((item) => item.toLowerCase())
+    );
+    if (!items.length) return;
+
+    const key = emotiveRecipeKey(items);
+    if (!seen.has(key)) seen.set(key, { items, source: parsed.name });
+  });
+
+  return [...seen.values()];
+}
+
+function getEmotiveRecipeLibrary() {
+  const library = collectFileEmotiveRecipes();
+  const keys = new Set(library.map((recipe) => emotiveRecipeKey(recipe.items)));
+
+  emotiveSessionRecipes.forEach((items) => {
+    const key = emotiveRecipeKey(items);
+    if (keys.has(key)) return;
+    keys.add(key);
+    library.push({ items: [...items], source: "" });
+  });
+
+  return library;
+}
+
+/* ---------- applying a recipe ---------- */
+
+function applyEmotiveRecipeToSection(lineIndex, recipeItems) {
+  const lines = editor.value.split("\n");
+  const parsed = parseSectionLabelLine(lines[lineIndex]);
+
+  if (!parsed) {
+    statusEl.textContent = "Couldn't apply the recipe: that section label has moved or changed.";
+    return false;
+  }
+
+  // The drawer collapses consecutive identical labels (common in .epicx), so
+  // update the whole run to keep the drawer showing a single entry.
+  const originalTrimmed = lines[lineIndex].trim();
+  const targets = [lineIndex];
+
+  for (let i = lineIndex + 1; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim();
+    if (!/^\[[^\]]+\]$/.test(trimmed)) continue;
+    if (trimmed !== originalTrimmed) break;
+    targets.push(i);
+  }
+
+  const ordered = orderEmotiveRecipe(recipeItems);
+
+  targets.forEach((index) => {
+    const label = parseSectionLabelLine(lines[index]);
+    if (!label) return;
+
+    // Replace existing emotives; keep other instructions first and any
+    // existing arcs last (arcs come after modifiers).
+    const others = label.items.filter(
+      (item) => !isEmotiveItem(item) && !isCompoundEmotiveItem(item) && !isArcItem(item)
+    );
+    const arcs = label.items.filter(isArcItem);
+    const items = [...others, ...ordered, ...arcs];
+
+    lines[index] =
+      label.indent + "[" + label.name + " {{" + items.join(", ") + "}}]" + label.trailing;
+  });
+
+  const scrollTop = editor.scrollTop;
+  replaceEditorTextWithManualUndo(lines.join("\n"));
+
+  const offset = getOffsetForLine(editor.value, lineIndex);
+  editor.focus();
+  editor.setSelectionRange(offset, offset);
+  editor.scrollTop = scrollTop;
+
+  refreshEditorView();
+  return true;
+}
+
+/* ---------- typed recipes ---------- */
+
+// Accepts "energetic, swell, strong" or "{{energetic, swell, strong}}".
+// Returns { items } (ordered emotives-then-modifiers) or { error }.
+function parseEmotiveRecipeText(text) {
+  const cleaned = String(text || "").replace(/^\s*\{\{/, "").replace(/\}\}\s*$/, "").trim();
+  const tokens = cleaned.split(/[\s,]+/).map((t) => t.toLowerCase()).filter(Boolean);
+
+  if (!tokens.length) return { error: "Type at least one emotive, e.g. energetic, swell, strong." };
+
+  const items = [];
+  const unknown = [];
+
+  tokens.forEach((token) => {
+    if (token.includes("--")) {
+      unknown.push({ token, reason: "individual syntax (x--y) isn't supported here" });
+    } else if (isArcItem(token)) {
+      unknown.push({ token, reason: "arcs aren't supported yet" });
+    } else if (!isEmotiveItem(token)) {
+      unknown.push({ token, reason: "not in the emotive vocabulary" });
+    } else if (!items.includes(token)) {
+      items.push(token);
+    }
+  });
+
+  if (unknown.length) {
+    return { error: unknown.map((u) => `"${u.token}": ${u.reason}`).join("; ") + "." };
+  }
+
+  for (const term of items) {
+    const clash = (EMOTIVE_CONFLICTS[term] || []).find((other) => items.includes(other));
+    if (clash) return { error: `${term} and ${clash} can't be combined in one recipe.` };
+  }
+
+  return { items: orderEmotiveRecipe(items) };
+}
+
+function submitEmotiveTextRecipe() {
+  const state = emotiveState;
+  if (!state) return;
+
+  const result = parseEmotiveRecipeText(state.textValue);
+
+  if (result.error) {
+    state.textError = result.error;
+  } else {
+    const key = emotiveRecipeKey(result.items);
+
+    if (!state.recipes.some((r) => emotiveRecipeKey(r.items) === key)) {
+      state.recipes.push({ items: result.items, source: "" });
+      emotiveSessionRecipes.push(result.items);
+    }
+
+    state.selectedKey = key;
+    state.textValue = "";
+    state.textError = "";
+  }
+
+  renderEmotiveDialog();
+
+  const input = state.overlay.querySelector(".emo-text-input");
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+function handleEmotiveDialogInput(event) {
+  const state = emotiveState;
+  if (!state || !event.target.classList.contains("emo-text-input")) return;
+
+  state.textValue = event.target.value;
+
+  if (state.textError) {
+    state.textError = "";
+    const errorEl = state.overlay.querySelector(".emo-text-error");
+    if (errorEl) errorEl.textContent = "";
+  }
+}
+
+/* ---------- popup ---------- */
+
+function openEmotiveRecipeDialog(lineIndex) {
+  if (emotiveState) return;
+
+  const parsed = parseSectionLabelLine(editor.value.split("\n")[lineIndex]);
+  if (!parsed) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "emo-overlay";
+
+  emotiveState = {
+    lineIndex,
+    sectionName: parsed.name,
+    draft: null,          // string[] while composing, otherwise null
+    recipes: getEmotiveRecipeLibrary(),
+    selectedKey: null,
+    textValue: "",
+    textError: "",
+    overlay,
+    previousFocus: document.activeElement
+  };
+
+  overlay.addEventListener("click", handleEmotiveDialogClick);
+  overlay.addEventListener("input", handleEmotiveDialogInput);
+  document.addEventListener("keydown", handleEmotiveDialogKeydown, true);
+  document.body.appendChild(overlay);
+
+  renderEmotiveDialog();
+  overlay.querySelector(".emo-text-input")?.focus();
+}
+
+function closeEmotiveRecipeDialog() {
+  if (!emotiveState) return;
+
+  const { overlay, previousFocus } = emotiveState;
+  document.removeEventListener("keydown", handleEmotiveDialogKeydown, true);
+  overlay.remove();
+  emotiveState = null;
+
+  if (previousFocus && document.contains(previousFocus)) previousFocus.focus();
+}
+
+function handleEmotiveDialogKeydown(event) {
+  if (event.key === "Enter" && event.target?.classList?.contains("emo-text-input")) {
+    event.preventDefault();
+    event.stopPropagation();
+    submitEmotiveTextRecipe();
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeEmotiveRecipeDialog();
+  }
+}
+
+function renderEmotiveRecipePills(items) {
+  return items.map((item) => `<span class="emo-pill">${escapeHtml(item)}</span>`).join("");
+}
+
+function renderEmotiveChoice(term, composing, draft) {
+  const on = composing && draft.includes(term);
+  return `<button type="button" class="emo-choice${on ? " is-on" : ""}"
+    data-emotive="${term}" aria-pressed="${on}"
+    title="${escapeHtml(EMOTIVE_DEFINITIONS[term])}"
+    ${composing ? "" : "disabled"}>${escapeHtml(term)}</button>`;
+}
+
+function renderEmotiveDialog() {
+  const state = emotiveState;
+  if (!state) return;
+
+  const composing = Array.isArray(state.draft);
+  const draftHasItems = composing && state.draft.length > 0;
+
+  const layersHtml = EMOTIVE_LAYERS.map((layer) => `
+    <div class="emo-layer-name">${escapeHtml(layer.name)}</div>
+    <div class="emo-pairs">
+      ${layer.axes.map(({ name, pair }) => `
+        <div class="emo-pair" title="${escapeHtml(name)}">
+          ${pair.map((term) => renderEmotiveChoice(term, composing, state.draft)).join("")}
+        </div>
+      `).join("")}
+    </div>
+  `).join("");
+
+  const modifiersHtml = `
+    <div class="emo-layer-name">Prominence</div>
+    <div class="emo-pair emo-mods">
+      ${EMOTIVE_MODIFIERS.map((term) => renderEmotiveChoice(term, composing, state.draft)).join("")}
+    </div>`;
+
+  const composeHtml = composing
+    ? `<div class="emo-container is-draft">
+         <div class="emo-items">${draftHasItems
+           ? renderEmotiveRecipePills(orderEmotiveRecipe(state.draft))
+           : `<span class="emo-hint">Pick emotives above…</span>`}</div>
+         <button type="button" class="emo-done" title="Done — add to recipes"
+           aria-label="Done — add to recipes" ${draftHasItems ? "" : "disabled"}>
+           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+             <path d="M3 6l5 5 5-5"/></svg>
+         </button>
+       </div>`
+    : `<div class="emo-hint">Press Add to start a new recipe, then pick emotives above.</div>`;
+
+  const recipesHtml = state.recipes.length
+    ? state.recipes.map((recipe) => {
+        const key = emotiveRecipeKey(recipe.items);
+        return `<button type="button" class="emo-container emo-recipe${key === state.selectedKey ? " is-selected" : ""}"
+                  data-recipe-key="${escapeHtml(key)}" aria-pressed="${key === state.selectedKey}">
+                  <span class="emo-items">${renderEmotiveRecipePills(recipe.items)}</span>
+                  ${recipe.source ? `<span class="emo-source">from ${escapeHtml(recipe.source)}</span>` : ""}
+                </button>`;
+      }).join("")
+    : `<div class="emo-empty">No recipes yet. Compose one above.</div>`;
+
+  state.overlay.innerHTML = `
+    <div class="emo-dialog" role="dialog" aria-modal="true" aria-label="Emotive recipes">
+      <div class="emo-header">
+        <div class="emo-title">Emotive recipe<small>${escapeHtml(state.sectionName)}</small></div>
+        <button type="button" class="emo-x" data-action="close" aria-label="Close">×</button>
+      </div>
+      <div class="emo-body">
+        <div>
+          <div class="emo-section-head"><span>Type a recipe</span></div>
+          <div class="emo-text-row">
+            <input type="text" class="emo-text-input" spellcheck="false" autocomplete="off"
+              placeholder="energetic, swell, strong" aria-label="Recipe as text"
+              value="${escapeHtml(state.textValue)}">
+            <button type="button" class="emo-btn" data-action="add-text">Add recipe</button>
+          </div>
+          <div class="emo-text-error" role="alert">${escapeHtml(state.textError)}</div>
+        </div>
+        <div>
+          <div class="emo-section-head"><span>Emotives</span></div>
+          ${layersHtml}
+          ${modifiersHtml}
+        </div>
+        <div>
+          <div class="emo-section-head">
+            <span>New recipe</span>
+            <button type="button" class="emo-btn emo-add-btn" data-action="add" ${composing ? "disabled" : ""}>+ Add</button>
+          </div>
+          ${composeHtml}
+        </div>
+        <div>
+          <div class="emo-section-head"><span>Recipes</span></div>
+          <div class="emo-recipes">${recipesHtml}</div>
+        </div>
+      </div>
+      <div class="emo-footer">
+        <button type="button" class="emo-btn" data-action="close">Cancel</button>
+        <button type="button" class="emo-btn emo-btn-primary" data-action="apply"
+          ${state.selectedKey ? "" : "disabled"}>Add recipe to Section</button>
+      </div>
+    </div>`;
+}
+
+function handleEmotiveDialogClick(event) {
+  const state = emotiveState;
+  if (!state) return;
+
+  const target = event.target.closest("button");
+  if (!target || target.disabled || !state.overlay.contains(target)) return;
+
+  const action = target.dataset.action;
+
+  if (action === "close") {
+    closeEmotiveRecipeDialog();
+    return;
+  }
+
+  if (action === "add-text") {
+    submitEmotiveTextRecipe();
+    return;
+  }
+
+  if (action === "add") {
+    state.draft = [];
+    renderEmotiveDialog();
+    return;
+  }
+
+  if (action === "apply") {
+    const recipe = state.recipes.find((r) => emotiveRecipeKey(r.items) === state.selectedKey);
+    if (!recipe) return;
+    const lineIndex = state.lineIndex;
+    closeEmotiveRecipeDialog();
+    applyEmotiveRecipeToSection(lineIndex, recipe.items);
+    return;
+  }
+
+  if (target.dataset.emotive && Array.isArray(state.draft)) {
+    const term = target.dataset.emotive;
+
+    if (state.draft.includes(term)) {
+      state.draft = state.draft.filter((item) => item !== term);
+    } else {
+      const displaced = EMOTIVE_CONFLICTS[term] || [];
+      state.draft = [...state.draft.filter((item) => !displaced.includes(item)), term];
+    }
+
+    renderEmotiveDialog();
+    return;
+  }
+
+  if (target.classList.contains("emo-done") && state.draft?.length) {
+    const items = orderEmotiveRecipe(state.draft);
+    const key = emotiveRecipeKey(items);
+
+    if (!state.recipes.some((r) => emotiveRecipeKey(r.items) === key)) {
+      state.recipes.push({ items, source: "" });
+      emotiveSessionRecipes.push(items);
+    }
+
+    state.selectedKey = key;
+    state.draft = null;
+    renderEmotiveDialog();
+    return;
+  }
+
+  if (target.dataset.recipeKey) {
+    state.selectedKey = target.dataset.recipeKey;
+    renderEmotiveDialog();
+  }
+}
+
+installEmotiveRecipeStyles();
+
 
 restoreSessionState();
 window.EpicInspector?.onEditorHistoryAction?.((action) => {
