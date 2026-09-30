@@ -371,6 +371,8 @@ function syncEditorHighlight() {
 
   editorHighlight.scrollTop = editor.scrollTop;
   editorHighlight.scrollLeft = editor.scrollLeft;
+
+  updateSectionFlashOverlay();
 }
 
 function showGhostHeaderIfAppropriate() {
@@ -419,6 +421,9 @@ function hasUnsavedChanges() {
 }
 
 let highlightSyncFrame = null;
+let sectionFlash = null; // { start, end, startedAt } line range briefly highlighted after a drawer jump
+let sectionFlashTimer = null;
+const SECTION_FLASH_MS = 1400;
 
 function requestEditorHighlightSync() {
   if (highlightSyncFrame) {
@@ -2194,7 +2199,7 @@ function renderSectionToc() {
       const lineIndex = Number(button.dataset.lineIndex);
       const offset = getOffsetForLine(editor.value, lineIndex);
 
-      editor.focus();
+      // Move the caret to the section without stealing focus from the drawer.
       editor.setSelectionRange(offset, offset);
 
       const lineHeight =
@@ -2203,6 +2208,7 @@ function renderSectionToc() {
       editor.scrollTop =
         Math.max(0, lineIndex * lineHeight - 40);
 
+      flashSection(lineIndex);
       refreshEditorView();
     });
   });
@@ -2408,6 +2414,17 @@ function renderEpicHighlight(value) {
 
     if (!inHeader && isMarkdownListLine(rawLine)) {
       lineHtml = `<span class="md-list-line">${lineHtml}</span>`;
+    }
+
+    if (sectionFlash) {
+      // Empty, zero-size markers: they only let us measure where the section
+      // starts and ends. They add no text and do not change layout.
+      if (index === sectionFlash.start) {
+        lineHtml = `<span data-flash-marker="start"></span>${lineHtml}`;
+      }
+      if (index === sectionFlash.end) {
+        lineHtml = `${lineHtml}<span data-flash-marker="end"></span>`;
+      }
     }
 
     if (startsEpicxEntry) {
@@ -3300,6 +3317,113 @@ editor.addEventListener("beforeinput", (event) => {
     editor.scrollTop = scrollTop;
   });
 });
+
+/* ==========================================================================
+   Section flash: brief background highlight after jumping to a section
+   ========================================================================== */
+
+function installSectionFlashStyles() {
+  const css = `
+.epic-section-flash-band {
+  position: absolute; left: 0; right: 0; pointer-events: none;
+  background-color: rgba(124, 156, 255, 0);
+  animation: epic-section-flash-fade ${SECTION_FLASH_MS}ms ease-out both;
+}
+@keyframes epic-section-flash-fade {
+  0%   { background-color: rgba(124, 156, 255, .24); }
+  100% { background-color: rgba(124, 156, 255, 0); }
+}
+`;
+  try {
+    if ("adoptedStyleSheets" in document && typeof CSSStyleSheet !== "undefined") {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      return;
+    }
+  } catch (_) { /* fall through to <style> */ }
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+// Draws one solid band behind the flashed section. The band is absolutely
+// positioned inside the highlight layer (so it scrolls with the text) and takes
+// no space in the text flow, so nothing moves when it appears or disappears.
+function updateSectionFlashOverlay() {
+  if (!editorHighlight || !sectionFlash) return;
+
+  const startMarker = editorHighlight.querySelector('[data-flash-marker="start"]');
+  const endMarker = editorHighlight.querySelector('[data-flash-marker="end"]');
+  if (!startMarker || !endMarker) return;
+
+  if (getComputedStyle(editorHighlight).position === "static") {
+    editorHighlight.style.position = "relative";
+  }
+
+  const lineHeight = parseFloat(getComputedStyle(editorHighlight).lineHeight) || 20;
+  const layerRect = editorHighlight.getBoundingClientRect();
+  const startRect = startMarker.getBoundingClientRect();
+  const endRect = endMarker.getBoundingClientRect();
+
+  // Marker rects cover the font box; expand to whole line boxes, then convert
+  // to the layer's scrolled content coordinates.
+  const origin = layerRect.top + editorHighlight.clientTop - editorHighlight.scrollTop;
+  const top = startRect.top + startRect.height / 2 - lineHeight / 2 - origin;
+  const bottom = endRect.top + endRect.height / 2 + lineHeight / 2 - origin;
+  if (!(bottom > top)) return;
+
+  const elapsed = Math.max(0, Math.min(SECTION_FLASH_MS, Date.now() - sectionFlash.startedAt));
+
+  const band = document.createElement("div");
+  band.className = "epic-section-flash-band";
+  band.style.top = `${top}px`;
+  band.style.height = `${bottom - top}px`;
+  // Negative delay keeps the fade continuous when the layer re-renders mid-flash.
+  band.style.animationDelay = `-${elapsed}ms`;
+  editorHighlight.appendChild(band);
+}
+
+// In .epicx, an entry's number and timestamp sit on the two lines above its
+// [Section] label. Returns the first line of that entry (or the label line).
+function getEntryStartLine(lines, labelLine) {
+  let start = labelLine;
+
+  if (isEpicxTimeLine(lines[start - 1] || "")) {
+    start -= 1;
+    if (isEpicxEntryIndexLine(lines[start - 1] || "")) start -= 1;
+  }
+
+  return start;
+}
+
+// Highlights the section from its first line (including the .epicx entry
+// number and timestamp) through the line before the next drawer entry's own
+// number/timestamp, with trailing blank lines excluded.
+function flashSection(lineIndex) {
+  const lines = editor.value.split("\n");
+  const entries = getSectionTocEntries(editor.value);
+  const position = entries.findIndex((entry) => entry.lineIndex === lineIndex);
+
+  const start = getEntryStartLine(lines, lineIndex);
+
+  let end = position >= 0 && position < entries.length - 1
+    ? getEntryStartLine(lines, entries[position + 1].lineIndex) - 1
+    : lines.length - 1;
+
+  while (end > start && lines[end].trim() === "") end -= 1;
+
+  clearTimeout(sectionFlashTimer);
+  sectionFlash = { start, end, startedAt: Date.now() };
+  requestEditorHighlightSync();
+
+  sectionFlashTimer = setTimeout(() => {
+    sectionFlash = null;
+    requestEditorHighlightSync();
+  }, SECTION_FLASH_MS + 100);
+}
+
+installSectionFlashStyles();
 
 /* ==========================================================================
    Emotive recipes (section drawer "more" popup)
