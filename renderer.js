@@ -2,6 +2,7 @@ let currentFilePath = "";
 
 const openBtn = document.getElementById("openBtn");
 const saveBtn = document.getElementById("saveBtn");
+
 const clearSessionBtn = document.getElementById("clearSessionBtn");
 const editor = document.getElementById("editor");
 const filePathEl = document.getElementById("filePath");
@@ -3188,15 +3189,45 @@ async function saveCurrentTextFile({
   return result;
 }
 
-async function performSave() {
+async function performSave({ saveAs = false } = {}) {
   try {
     if (studioTimingLink?.kind === 'project') {
+      if (saveAs) {
+        statusEl.textContent =
+          "This project is linked to Studio, which saves it. Unlink it from Studio first to use Save As.";
+        return;
+      }
       await saveLinkedStudioProject();
       return;
     }
-    statusEl.textContent = "Saving...";
+    statusEl.textContent = saveAs ? "Save As..." : "Saving...";
 
     const isTextFile = /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");
+
+    if (isTextFile && saveAs) {
+      // Write the text to a new file and keep editing that file. Linked audio
+      // and Studio are not touched; the next Save updates them as usual.
+      const result = await window.EpicInspector.saveTextAs({
+        text: editor.value,
+        defaultPath: currentFilePath
+      });
+
+      if (!result) {
+        statusEl.textContent = "Save As canceled.";
+        return;
+      }
+
+      currentFilePath = result.filePath;
+      sourceEditorText = editor.value;
+      sourceHadContent = editor.value.trim().length > 0;
+
+      filePathEl.textContent = getDisplayName(currentFilePath);
+      statusEl.textContent = `Saved as:\n${getDisplayName(result.filePath)}`;
+
+      saveSessionState();
+      updateHeaderState();
+      return;
+    }
 
     if (isTextFile) {
       const result = await saveCurrentTextFile();
@@ -3234,8 +3265,14 @@ async function performSave() {
 
     const result = await window.EpicInspector.saveMedia({
       filePath: linkedAudioPath || currentFilePath,
-      epicx: editor.value
+      epicx: editor.value,
+      saveAs
     });
+
+    if (!result) {
+      statusEl.textContent = saveAs ? "Save As canceled." : "Save canceled.";
+      return;
+    }
 
     currentFilePath = result.filePath;
     filePathEl.textContent = getDisplayName(currentFilePath);
@@ -3262,18 +3299,15 @@ async function performSave() {
   }
 }
 
-saveBtn.addEventListener("click", performSave);
+saveBtn.addEventListener("click", () => performSave());
 
 addAlbumArtBtn?.addEventListener("click", () => {
   addAlbumArt();
 });
 
-window.addEventListener("keydown", (ev) => {
-  if ((ev.metaKey || ev.ctrlKey) && ev.key === "s") {
-    ev.preventDefault();
-    performSave();
-  }
-});
+// File > Save / Save As... (and their shortcuts) live in the application menu;
+// main.js calls this when one of them is chosen.
+window.epicMenuSave = (options = {}) => performSave({ saveAs: Boolean(options.saveAs) });
 
 editor.addEventListener("input", requestEditorHighlightSync);
 editor.addEventListener("keyup", requestEditorHighlightSync);
@@ -3550,6 +3584,18 @@ function installEmotiveRecipeStyles() {
 .emo-layer-name { margin: 10px 0 6px; font-size: 11px; color: var(--emo-muted); }
 .emo-layer-name:first-of-type { margin-top: 0; }
 .emo-hint, .emo-empty { color: var(--emo-muted); font-size: 13px; }
+.emo-drawer-toggle {
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  font: inherit; color: var(--emo-muted); background: transparent; border: none;
+  padding: 2px 0; cursor: pointer;
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+}
+.emo-drawer-toggle:hover { color: var(--emo-fg); }
+.emo-chevron { transition: transform .15s ease; transform: rotate(-90deg); }
+.emo-chevron.is-open { transform: rotate(0deg); }
+.emo-drawer-body { margin-top: 8px; }
+.emo-delete { border-color: var(--emo-border); color: var(--emo-muted); }
+.emo-delete:hover:not(:disabled) { background: #d9534f; border-color: #d9534f; color: #fff; }
 .emo-text-row { display: flex; gap: 8px; }
 .emo-text-input { flex: 1; min-width: 0; font: inherit; color: inherit; background: rgba(127,127,127,.12);
   border: 1px solid var(--emo-border); border-radius: 8px; padding: 6px 10px; }
@@ -3712,17 +3758,9 @@ function getEmotiveRecipeLibrary() {
 
 /* ---------- applying a recipe ---------- */
 
-function applyEmotiveRecipeToSection(lineIndex, recipeItems) {
-  const lines = editor.value.split("\n");
-  const parsed = parseSectionLabelLine(lines[lineIndex]);
-
-  if (!parsed) {
-    statusEl.textContent = "Couldn't apply the recipe: that section label has moved or changed.";
-    return false;
-  }
-
-  // The drawer collapses consecutive identical labels (common in .epicx), so
-  // update the whole run to keep the drawer showing a single entry.
+// The drawer collapses consecutive identical labels (common in .epicx), so
+// edits apply to the whole run to keep the drawer showing a single entry.
+function getSectionLabelRun(lines, lineIndex) {
   const originalTrimmed = lines[lineIndex].trim();
   const targets = [lineIndex];
 
@@ -3732,6 +3770,63 @@ function applyEmotiveRecipeToSection(lineIndex, recipeItems) {
     if (trimmed !== originalTrimmed) break;
     targets.push(i);
   }
+
+  return targets;
+}
+
+// Everything on the label that belongs to its recipe: emotives, modifiers,
+// individual-syntax items, and arcs (an arc describes the recipe's lifecycle).
+function getSectionRecipeItems(lineIndex) {
+  const parsed = parseSectionLabelLine(editor.value.split("\n")[lineIndex]);
+  if (!parsed) return [];
+
+  return parsed.items.filter(
+    (item) => isEmotiveItem(item) || isCompoundEmotiveItem(item) || isArcItem(item)
+  );
+}
+
+function removeEmotiveRecipeFromSection(lineIndex) {
+  const lines = editor.value.split("\n");
+  const parsed = parseSectionLabelLine(lines[lineIndex]);
+
+  if (!parsed) {
+    statusEl.textContent = "Couldn't remove the recipe: that section label has moved or changed.";
+    return false;
+  }
+
+  getSectionLabelRun(lines, lineIndex).forEach((index) => {
+    const label = parseSectionLabelLine(lines[index]);
+    if (!label) return;
+
+    // Keep non-recipe instructions (e.g. "choral chant"); drop the recipe and its arc.
+    const others = label.items.filter(
+      (item) => !isEmotiveItem(item) && !isCompoundEmotiveItem(item) && !isArcItem(item)
+    );
+
+    lines[index] =
+      label.indent +
+      "[" + label.name + (others.length ? " {{" + others.join(", ") + "}}" : "") + "]" +
+      label.trailing;
+  });
+
+  const scrollTop = editor.scrollTop;
+  replaceEditorTextWithManualUndo(lines.join("\n"));
+  editor.scrollTop = scrollTop;
+
+  refreshEditorView();
+  return true;
+}
+
+function applyEmotiveRecipeToSection(lineIndex, recipeItems) {
+  const lines = editor.value.split("\n");
+  const parsed = parseSectionLabelLine(lines[lineIndex]);
+
+  if (!parsed) {
+    statusEl.textContent = "Couldn't apply the recipe: that section label has moved or changed.";
+    return false;
+  }
+
+  const targets = getSectionLabelRun(lines, lineIndex);
 
   const ordered = orderEmotiveRecipe(recipeItems);
 
@@ -3862,6 +3957,7 @@ function openEmotiveRecipeDialog(lineIndex) {
     selectedKey: null,
     textValue: "",
     textError: "",
+    emotivesOpen: false,   // the emotive buttons live in a drawer, collapsed by default
     overlay,
     previousFocus: document.activeElement
   };
@@ -3941,7 +4037,7 @@ function renderEmotiveDialog() {
     ? `<div class="emo-container is-draft">
          <div class="emo-items">${draftHasItems
            ? renderEmotiveRecipePills(orderEmotiveRecipe(state.draft))
-           : `<span class="emo-hint">Pick emotives above…</span>`}</div>
+           : `<span class="emo-hint">Pick emotives from the Emotives drawer…</span>`}</div>
          <button type="button" class="emo-done" title="Done — add to recipes"
            aria-label="Done — add to recipes" ${draftHasItems ? "" : "disabled"}>
            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -3949,7 +4045,7 @@ function renderEmotiveDialog() {
              <path d="M3 6l5 5 5-5"/></svg>
          </button>
        </div>`
-    : `<div class="emo-hint">Press Add to start a new recipe, then pick emotives above.</div>`;
+    : `<div class="emo-hint">Press Add to start a new recipe, then pick emotives from the Emotives drawer.</div>`;
 
   const recipesHtml = state.recipes.length
     ? state.recipes.map((recipe) => {
@@ -3962,6 +4058,35 @@ function renderEmotiveDialog() {
       }).join("")
     : `<div class="emo-empty">No recipes yet. Compose one above.</div>`;
 
+  const currentItems = getSectionRecipeItems(state.lineIndex);
+
+  const currentHtml = currentItems.length
+    ? `<div>
+         <div class="emo-section-head"><span>Current recipe</span></div>
+         <div class="emo-container">
+           <div class="emo-items">${renderEmotiveRecipePills(currentItems)}</div>
+           <button type="button" class="emo-done emo-delete" data-action="remove-section-recipe"
+             title="Remove recipe from section" aria-label="Remove recipe from section">
+             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+               <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>
+           </button>
+         </div>
+       </div>`
+    : "";
+
+  const drawerHtml = `
+    <div>
+      <button type="button" class="emo-drawer-toggle" data-action="toggle-emotives"
+        aria-expanded="${state.emotivesOpen}">
+        <span>Emotives</span>
+        <svg class="emo-chevron${state.emotivesOpen ? " is-open" : ""}" width="14" height="14"
+          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+      </button>
+      ${state.emotivesOpen ? `<div class="emo-drawer-body">${layersHtml}${modifiersHtml}</div>` : ""}
+    </div>`;
+
   state.overlay.innerHTML = `
     <div class="emo-dialog" role="dialog" aria-modal="true" aria-label="Emotive recipes">
       <div class="emo-header">
@@ -3969,6 +4094,7 @@ function renderEmotiveDialog() {
         <button type="button" class="emo-x" data-action="close" aria-label="Close">×</button>
       </div>
       <div class="emo-body">
+        ${currentHtml}
         <div>
           <div class="emo-section-head"><span>Type a recipe</span></div>
           <div class="emo-text-row">
@@ -3979,11 +4105,7 @@ function renderEmotiveDialog() {
           </div>
           <div class="emo-text-error" role="alert">${escapeHtml(state.textError)}</div>
         </div>
-        <div>
-          <div class="emo-section-head"><span>Emotives</span></div>
-          ${layersHtml}
-          ${modifiersHtml}
-        </div>
+        ${drawerHtml}
         <div>
           <div class="emo-section-head">
             <span>New recipe</span>
@@ -4018,12 +4140,39 @@ function handleEmotiveDialogClick(event) {
     return;
   }
 
+  if (action === "toggle-emotives") {
+    state.emotivesOpen = !state.emotivesOpen;
+    renderEmotiveDialog();
+    return;
+  }
+
+  if (action === "remove-section-recipe") {
+    // Keep the removed recipe available in the list so it isn't lost.
+    const removed = orderEmotiveRecipe(
+      getSectionRecipeItems(state.lineIndex).filter(isEmotiveItem).map((item) => item.toLowerCase())
+    );
+    const removedKey = emotiveRecipeKey(removed);
+
+    if (removed.length && removeEmotiveRecipeFromSection(state.lineIndex)) {
+      if (!state.recipes.some((r) => emotiveRecipeKey(r.items) === removedKey)) {
+        state.recipes.push({ items: removed, source: "" });
+        emotiveSessionRecipes.push(removed);
+      }
+    } else if (!removed.length) {
+      removeEmotiveRecipeFromSection(state.lineIndex);
+    }
+
+    renderEmotiveDialog();
+    return;
+  }
+
   if (action === "add-text") {
     submitEmotiveTextRecipe();
     return;
   }
 
   if (action === "add") {
+    state.emotivesOpen = true;
     state.draft = [];
     renderEmotiveDialog();
     return;

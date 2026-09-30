@@ -67,6 +67,25 @@ async function requestEpicAudioOutputPath({
   return result.filePath;
 }
 
+// "Save As" for audio: always ask where to write, defaulting to the current file.
+async function requestAudioSaveAsPath({ parentWindow, sourcePath }) {
+  const ext = path.extname(sourcePath).toLowerCase();
+  const result = await dialog.showSaveDialog(parentWindow, {
+    title: "Save EPIC Audio File As",
+    defaultPath: sourcePath,
+    filters: [
+      {
+        name: ext === ".mp3" ? "MP3 Audio" : "WAV Audio",
+        extensions: [ext.replace(/^\./, "")]
+      }
+    ]
+  });
+
+  if (result.canceled) return null;
+
+  return result.filePath;
+}
+
 async function writeStandardMetadata(filePath, fields) {
   const kind = getMediaKind(filePath);
 
@@ -143,6 +162,14 @@ function updateStudioTimingMenuState(state = {}) {
 function createApplicationMenu(win) {
   const isMac = process.platform === "darwin";
   const template = [];
+  const runRendererSave = (saveAs) => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents
+      .executeJavaScript(
+        `window.epicMenuSave && window.epicMenuSave({ saveAs: ${saveAs ? "true" : "false"} })`
+      )
+      .catch((error) => console.error("[main] menu save failed:", error));
+  };
   const sendEditorHistoryAction = (action) => {
     if (!win || win.isDestroyed()) return;
     win.webContents.send("editor-history:action", action);
@@ -188,6 +215,17 @@ function createApplicationMenu(win) {
     {
       label: "File",
       submenu: [
+        {
+          label: "Save",
+          accelerator: "CmdOrCtrl+S",
+          click: () => runRendererSave(false)
+        },
+        {
+          label: "Save As...",
+          accelerator: "CmdOrCtrl+Shift+S",
+          click: () => runRendererSave(true)
+        },
+        { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" }
       ]
     },
@@ -714,14 +752,28 @@ ipcMain.handle("store-in-audio", async (event, payload) => {
   };
 });
 
-ipcMain.handle("save-text-as", async (_event, payload) => {
-  const result = await dialog.showSaveDialog({
-    title: "Save EPIC File",
-    defaultPath: "Untitled.epic",
-    filters: [
-      { name: "EPIC", extensions: ["epic"] },
-      { name: "EPICX", extensions: ["epicx"] }
-    ]
+ipcMain.handle("save-text-as", async (event, payload) => {
+  // For "Save As" the renderer passes the current file so the dialog opens
+  // next to it with its name and type preselected.
+  const requestedPath = String(payload?.defaultPath || "");
+  const ext = path.extname(requestedPath).toLowerCase().replace(/^\./, "");
+
+  const filters = [
+    { name: "EPIC", extensions: ["epic"] },
+    { name: "EPICX", extensions: ["epicx"] }
+  ];
+
+  if (ext === "txt" || ext === "md") {
+    filters.unshift({ name: ext === "md" ? "Markdown" : "Text", extensions: [ext] });
+  } else if (ext === "epicx") {
+    filters.reverse();
+  }
+
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showSaveDialog(parentWindow, {
+    title: requestedPath ? "Save EPIC File As" : "Save EPIC File",
+    defaultPath: requestedPath || "Untitled.epic",
+    filters
   });
 
   if (result.canceled) return null;
@@ -969,7 +1021,7 @@ ipcMain.handle("open-media", async () => {
 });
 
 ipcMain.handle("save-media", async (event, payload) => {
-  const { filePath, epicx } = payload;
+  const { filePath, epicx, saveAs } = payload;
 
   const existingMetadata = await readMediaMetadata(filePath);
   const hasExistingEpicx =
@@ -979,15 +1031,20 @@ ipcMain.handle("save-media", async (event, payload) => {
 
   let outputPath = filePath;
 
-  if (!hasExistingEpicx && isAddingEpicx) {
+  if (saveAs || (!hasExistingEpicx && isAddingEpicx)) {
     const parentWindow =
       BrowserWindow.fromWebContents(event.sender);
 
-    outputPath = await requestEpicAudioOutputPath({
-      parentWindow,
-      sourcePath: filePath,
-      title: "Save EPIC Audio File"
-    });
+    outputPath = saveAs
+      ? await requestAudioSaveAsPath({
+          parentWindow,
+          sourcePath: filePath
+        })
+      : await requestEpicAudioOutputPath({
+          parentWindow,
+          sourcePath: filePath,
+          title: "Save EPIC Audio File"
+        });
 
     if (!outputPath) {
       return null;
