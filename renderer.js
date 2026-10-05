@@ -3727,11 +3727,10 @@ function collectFileEmotiveRecipes() {
     const parsed = parseSectionLabelLine(line);
     if (!parsed) return;
 
-    // Individual (per-emotive) syntax can't be reused as a shorthand recipe.
-    if (parsed.items.some(isCompoundEmotiveItem)) return;
-
     const items = orderEmotiveRecipe(
-      parsed.items.filter(isEmotiveItem).map((item) => item.toLowerCase())
+      parsed.items
+        .filter((item) => isEmotiveItem(item) || isCompoundEmotiveItem(item))
+        .map((item) => item.toLowerCase())
     );
     if (!items.length) return;
 
@@ -3860,8 +3859,10 @@ function applyEmotiveRecipeToSection(lineIndex, recipeItems) {
 
 /* ---------- typed recipes ---------- */
 
-// Accepts "energetic, swell, strong" or "{{energetic, swell, strong}}".
-// Returns { items } (ordered emotives-then-modifiers) or { error }.
+// Accepts "energetic, swell, strong" or "{{energetic, swell, strong}}", and the
+// per-emotive modifier form: "open, energetic, swell--strong".
+// Module rule: per-emotive modifiers can't be combined with a shared modifier.
+// Returns { items } (shared modifiers last) or { error }.
 function parseEmotiveRecipeText(text) {
   const cleaned = String(text || "").replace(/^\s*\{\{/, "").replace(/\}\}\s*$/, "").trim();
   const tokens = cleaned.split(/[\s,]+/).map((t) => t.toLowerCase()).filter(Boolean);
@@ -3869,27 +3870,66 @@ function parseEmotiveRecipeText(text) {
   if (!tokens.length) return { error: "Type at least one emotive, e.g. energetic, swell, strong." };
 
   const items = [];
-  const unknown = [];
+  const problems = [];
 
   tokens.forEach((token) => {
-    if (token.includes("--")) {
-      unknown.push({ token, reason: "individual syntax (x--y) isn't supported here" });
-    } else if (isArcItem(token)) {
-      unknown.push({ token, reason: "arcs aren't supported yet" });
-    } else if (!isEmotiveItem(token)) {
-      unknown.push({ token, reason: "not in the emotive vocabulary" });
-    } else if (!items.includes(token)) {
-      items.push(token);
+    const [base, ...rest] = token.split("--");
+
+    if (!isEmotiveItem(base)) {
+      problems.push(
+        isArcItem(base)
+          ? `"${token}": arcs aren't supported yet`
+          : `"${token}": not in the emotive vocabulary`
+      );
+      return;
     }
+
+    if (rest.length) {
+      if (isModifierTerm(base)) {
+        problems.push(`"${token}": a modifier can't take a modifier`);
+        return;
+      }
+
+      const [modifier, ...extra] = rest;
+
+      if (!isModifierTerm(modifier)) {
+        problems.push(
+          isArcItem(modifier)
+            ? `"${token}": arcs aren't supported yet`
+            : `"${token}": "${modifier}" isn't a modifier (strong, emphasis, diminished)`
+        );
+        return;
+      }
+
+      if (extra.length) {
+        problems.push(
+          `"${token}": ${extra.some(isArcItem) ? "arcs aren't supported yet" : "only one modifier per emotive"}`
+        );
+        return;
+      }
+    }
+
+    if (!items.includes(token)) items.push(token);
   });
 
-  if (unknown.length) {
-    return { error: unknown.map((u) => `"${u.token}": ${u.reason}`).join("; ") + "." };
+  if (problems.length) return { error: problems.join("; ") + "." };
+
+  const bases = items.map((item) => item.split("--")[0]);
+
+  for (let i = 0; i < bases.length; i += 1) {
+    if (bases.indexOf(bases[i]) !== i) {
+      return { error: `${bases[i]} is listed more than once.` };
+    }
+
+    const clash = (EMOTIVE_CONFLICTS[bases[i]] || []).find((other) => bases.includes(other));
+    if (clash) return { error: `${bases[i]} and ${clash} can't be combined in one recipe.` };
   }
 
-  for (const term of items) {
-    const clash = (EMOTIVE_CONFLICTS[term] || []).find((other) => items.includes(other));
-    if (clash) return { error: `${term} and ${clash} can't be combined in one recipe.` };
+  if (items.some(isCompoundEmotiveItem) && items.some(isModifierTerm)) {
+    return {
+      error:
+        "Per-emotive modifiers (like swell--strong) can't be combined with a shared modifier (like strong). Use one style or the other."
+    };
   }
 
   return { items: orderEmotiveRecipe(items) };
