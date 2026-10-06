@@ -3551,6 +3551,7 @@ const SECTION_LABEL_LINE_RE = /^(\s*)\[([^{\]]*?)\s*(?:\{\{([\s\S]*?)\}\})?\s*\]
 const emotiveRecipesBySong = new Map();
 let emotiveSessionRecipes = [];
 let emotiveState = null;
+let hoveredEditorLineIndex = null;
 
 function switchEmotiveRecipeSong(nextFilePath) {
   closeEmotiveRecipeDialog();
@@ -3985,8 +3986,6 @@ function submitEmotiveTextRecipe() {
       emotiveSessionRecipes.push(result.items);
     }
 
-    // If this section has no recipe yet, adding one is also the natural
-    // assignment action. Avoid making the user find and click it again.
     if (!getSectionRecipeItems(state.lineIndex).length) {
       applyEmotiveRecipeToSection(state.lineIndex, result.items);
       state.recipes = getEmotiveRecipeLibrary();
@@ -4019,6 +4018,75 @@ function handleEmotiveDialogInput(event) {
 }
 
 /* ---------- popup ---------- */
+
+function getEditorCaretLineIndex() {
+  const caret = editor.selectionStart;
+  return editor.value.slice(0, caret).split("\n").length - 1;
+}
+
+function getSectionLineIndexForEditorLine(lineIndex) {
+  const lines = editor.value.split("\n");
+
+  for (let i = lineIndex; i >= 0; i -= 1) {
+    if (parseSectionLabelLine(lines[i])) return i;
+  }
+
+  return null;
+}
+
+function getEditorLineIndexAtClientY(clientY) {
+  const rect = editor.getBoundingClientRect();
+  if (clientY < rect.top || clientY > rect.bottom) return null;
+
+  const style = getComputedStyle(editor);
+  const lineHeight = parseFloat(style.lineHeight) || 20;
+  const paddingTop = parseFloat(style.paddingTop) || 0;
+  const contentY = clientY - rect.top - paddingTop + editor.scrollTop;
+
+  if (contentY < 0) return null;
+
+  const lineIndex = Math.floor(contentY / lineHeight);
+  const lineCount = editor.value.split("\n").length;
+
+  return lineIndex >= 0 && lineIndex < lineCount ? lineIndex : null;
+}
+
+editor.addEventListener("pointermove", (event) => {
+  hoveredEditorLineIndex = getEditorLineIndexAtClientY(event.clientY);
+});
+
+editor.addEventListener("pointerleave", () => {
+  hoveredEditorLineIndex = null;
+});
+
+function handleEmotiveShortcut(event) {
+  if (
+    event.defaultPrevented ||
+    event.shiftKey ||
+    event.altKey ||
+    !(event.metaKey || event.ctrlKey) ||
+    event.key.toLowerCase() !== "e" ||
+    emotiveState
+  ) {
+    return;
+  }
+
+  let lineIndex = null;
+
+  if (document.activeElement === editor) {
+    lineIndex = getSectionLineIndexForEditorLine(getEditorCaretLineIndex());
+  } else if (Number.isInteger(hoveredEditorLineIndex)) {
+    lineIndex = getSectionLineIndexForEditorLine(hoveredEditorLineIndex);
+  }
+
+  if (!Number.isInteger(lineIndex)) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  openEmotiveRecipeDialog(lineIndex);
+}
+
+document.addEventListener("keydown", handleEmotiveShortcut, true);
 
 function openEmotiveRecipeDialog(lineIndex) {
   if (emotiveState) return;
@@ -4085,13 +4153,26 @@ function renderEmotiveDialog() {
   if (!state) return;
   const currentKey = emotiveRecipeKey(getSectionRecipeItems(state.lineIndex));
   const usedKeys = new Set(collectFileEmotiveRecipes().map(recipe => emotiveRecipeKey(recipe.items)));
-  // Keep unassigned choices first; the currently assigned recipe belongs last.
-  // Array#sort is stable, so library order is preserved within each group.
-  const displayedRecipes = [...state.recipes].sort((a, b) => {
-    const aAssigned = emotiveRecipeKey(a.items) === currentKey;
-    const bAssigned = emotiveRecipeKey(b.items) === currentKey;
-    return Number(aAssigned) - Number(bAssigned);
+
+  // Display ordering only. Do not mutate state.recipes: click handling relies on
+  // that library and continues to resolve selections exactly as before.
+  const appliedRecipes = state.recipes.filter(
+    recipe => emotiveRecipeKey(recipe.items) === currentKey
+  );
+  const unassignedRecipes = state.recipes.filter(recipe => {
+    const key = emotiveRecipeKey(recipe.items);
+    return key !== currentKey && !usedKeys.has(key);
+  }).reverse();
+  const otherAssignedRecipes = state.recipes.filter(recipe => {
+    const key = emotiveRecipeKey(recipe.items);
+    return key !== currentKey && usedKeys.has(key);
   });
+  const displayedRecipes = [
+    ...appliedRecipes,
+    ...unassignedRecipes,
+    ...otherAssignedRecipes
+  ];
+
   const recipesHtml = displayedRecipes.length
     ? displayedRecipes.map(recipe => {
         const key = emotiveRecipeKey(recipe.items);
