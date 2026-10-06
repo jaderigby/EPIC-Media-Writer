@@ -3649,8 +3649,32 @@ function installEmotiveRecipeStyles() {
   border-radius: 8px; border: 1px solid var(--emo-accent); background: transparent; color: var(--emo-accent); cursor: pointer; }
 .emo-done:hover:not(:disabled) { background: var(--emo-accent); color: var(--emo-accent-fg); }
 .emo-recipes { display: flex; flex-direction: column; gap: 8px; }
-.emo-recipe { width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; cursor: pointer; }
-.emo-recipe.is-selected { border-color: var(--emo-accent); box-shadow: 0 0 0 1px var(--emo-accent); background: rgba(124,156,255,.14); }
+.emo-recipes > .emo-container { position: relative; transition: border-color .15s ease, background-color .15s ease, color .15s ease; cursor: pointer; }
+.emo-container.is-current {
+  margin-top: 17px; margin-bottom: 30px; color: #fff;
+  background-color: rgb(53 78 155 / 26%); border-color: #4e63a8;
+}
+.emo-add-section { margin-top: 15px; margin-bottom: 15px; }
+.emo-container:not(.is-current) .emo-items { color: #b5c8ff; }
+.emo-container:not(.is-current) .emo-source { color: #a1add1; }
+.emo-container.is-current .emo-source { color: #b5c8ff; }
+.emo-recipes > .emo-container:hover { color: white; background-color: rgba(124,156,255,.14); border-color: var(--emo-accent); }
+.emo-recipes > .emo-container:hover .emo-items { color: white; }
+.emo-recipe .emo-items { transition: color .15s ease; }
+.emo-reference { display: grid; min-width: 80px; text-align: right; }
+.emo-reference > span { grid-area: 1 / 1; }
+.emo-use {
+  font-weight: 700;
+  position: absolute; top: 0; right: 0; bottom: 0; width: 80px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 0 9px 9px 0; background: var(--emo-accent); color: var(--emo-accent-fg);
+  visibility: hidden; opacity: 0; transition: opacity .15s ease, visibility .15s ease;
+}
+.emo-container:has(.emo-delete) .emo-use { right: 40px; border-radius: 0; }
+.emo-container:not(.is-current):hover .emo-reference .emo-source { visibility: hidden; }
+.emo-container:not(.is-current):hover .emo-use { visibility: visible; opacity: 1; }
+.emo-recipe { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; border: 0; border-radius: 6px; padding: 6px; text-align: left; font: inherit; color: inherit; background: transparent; cursor: pointer; }
+.emo-recipe .emo-items { line-height: 1.5; }
 `;
   try {
     if ("adoptedStyleSheets" in document && typeof CSSStyleSheet !== "undefined") {
@@ -3739,7 +3763,7 @@ function collectFileEmotiveRecipes() {
 
     const items = orderEmotiveRecipe(
       parsed.items
-        .filter((item) => isEmotiveItem(item) || isCompoundEmotiveItem(item))
+        .filter((item) => isEmotiveItem(item) || isCompoundEmotiveItem(item) || isArcItem(item))
         .map((item) => item.toLowerCase())
     );
     if (!items.length) return;
@@ -3848,7 +3872,7 @@ function applyEmotiveRecipeToSection(lineIndex, recipeItems) {
     const others = label.items.filter(
       (item) => !isEmotiveItem(item) && !isCompoundEmotiveItem(item) && !isArcItem(item)
     );
-    const arcs = label.items.filter(isArcItem);
+    const arcs = ordered.some(isArcItem) ? [] : label.items.filter(isArcItem);
     const items = [...others, ...ordered, ...arcs];
 
     lines[index] =
@@ -3961,7 +3985,13 @@ function submitEmotiveTextRecipe() {
       emotiveSessionRecipes.push(result.items);
     }
 
-    state.selectedKey = key;
+    // If this section has no recipe yet, adding one is also the natural
+    // assignment action. Avoid making the user find and click it again.
+    if (!getSectionRecipeItems(state.lineIndex).length) {
+      applyEmotiveRecipeToSection(state.lineIndex, result.items);
+      state.recipes = getEmotiveRecipeLibrary();
+    }
+
     state.textValue = "";
     state.textError = "";
   }
@@ -4002,12 +4032,11 @@ function openEmotiveRecipeDialog(lineIndex) {
   emotiveState = {
     lineIndex,
     sectionName: parsed.name,
-    draft: null,          // string[] while composing, otherwise null
     recipes: getEmotiveRecipeLibrary(),
-    selectedKey: null,
+    originalText: editor.value,
+    originalRecipes: emotiveSessionRecipes.map(items => [...items]),
     textValue: "",
     textError: "",
-    emotivesOpen: false,   // the emotive buttons live in a drawer, collapsed by default
     overlay,
     previousFocus: document.activeElement
   };
@@ -4051,91 +4080,38 @@ function renderEmotiveRecipePills(items) {
   return items.map((item) => `<span class="emo-pill">${escapeHtml(item)}</span>`).join("");
 }
 
-function renderEmotiveChoice(term, composing, draft) {
-  const on = composing && draft.includes(term);
-  return `<button type="button" class="emo-choice${on ? " is-on" : ""}"
-    data-emotive="${term}" aria-pressed="${on}"
-    title="${escapeHtml(EMOTIVE_DEFINITIONS[term])}"
-    ${composing ? "" : "disabled"}>${escapeHtml(term)}</button>`;
-}
-
 function renderEmotiveDialog() {
   const state = emotiveState;
   if (!state) return;
-
-  const composing = Array.isArray(state.draft);
-  const draftHasItems = composing && state.draft.length > 0;
-
-  const layersHtml = EMOTIVE_LAYERS.map((layer) => `
-    <div class="emo-layer-name">${escapeHtml(layer.name)}</div>
-    <div class="emo-pairs">
-      ${layer.axes.map(({ name, pair }) => `
-        <div class="emo-pair" title="${escapeHtml(name)}">
-          ${pair.map((term) => renderEmotiveChoice(term, composing, state.draft)).join("")}
-        </div>
-      `).join("")}
-    </div>
-  `).join("");
-
-  const modifiersHtml = `
-    <div class="emo-layer-name">Prominence</div>
-    <div class="emo-pair emo-mods">
-      ${EMOTIVE_MODIFIERS.map((term) => renderEmotiveChoice(term, composing, state.draft)).join("")}
-    </div>`;
-
-  const composeHtml = composing
-    ? `<div class="emo-container is-draft">
-         <div class="emo-items">${draftHasItems
-           ? renderEmotiveRecipePills(orderEmotiveRecipe(state.draft))
-           : `<span class="emo-hint">Pick emotives from the Emotives drawer…</span>`}</div>
-         <button type="button" class="emo-done" title="Done — add to recipes"
-           aria-label="Done — add to recipes" ${draftHasItems ? "" : "disabled"}>
-           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-             <path d="M3 6l5 5 5-5"/></svg>
-         </button>
-       </div>`
-    : `<div class="emo-hint">Press Add to start a new recipe, then pick emotives from the Emotives drawer.</div>`;
-
-  const recipesHtml = state.recipes.length
-    ? state.recipes.map((recipe) => {
+  const currentKey = emotiveRecipeKey(getSectionRecipeItems(state.lineIndex));
+  const usedKeys = new Set(collectFileEmotiveRecipes().map(recipe => emotiveRecipeKey(recipe.items)));
+  // Keep unassigned choices first; the currently assigned recipe belongs last.
+  // Array#sort is stable, so library order is preserved within each group.
+  const displayedRecipes = [...state.recipes].sort((a, b) => {
+    const aAssigned = emotiveRecipeKey(a.items) === currentKey;
+    const bAssigned = emotiveRecipeKey(b.items) === currentKey;
+    return Number(aAssigned) - Number(bAssigned);
+  });
+  const recipesHtml = displayedRecipes.length
+    ? displayedRecipes.map(recipe => {
         const key = emotiveRecipeKey(recipe.items);
-        return `<button type="button" class="emo-container emo-recipe${key === state.selectedKey ? " is-selected" : ""}"
-                  data-recipe-key="${escapeHtml(key)}" aria-pressed="${key === state.selectedKey}">
-                  <span class="emo-items">${renderEmotiveRecipePills(recipe.items)}</span>
-                  ${recipe.source ? `<span class="emo-source">from ${escapeHtml(recipe.source)}</span>` : ""}
-                </button>`;
-      }).join("")
-    : `<div class="emo-empty">No recipes yet. Compose one above.</div>`;
-
-  const currentItems = getSectionRecipeItems(state.lineIndex);
-
-  const currentHtml = currentItems.length
-    ? `<div>
-         <div class="emo-section-head"><span>Current recipe</span></div>
-         <div class="emo-container">
-           <div class="emo-items">${renderEmotiveRecipePills(currentItems)}</div>
-           <button type="button" class="emo-done emo-delete" data-action="remove-section-recipe"
-             title="Remove recipe from section" aria-label="Remove recipe from section">
-             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-               <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>
-           </button>
-         </div>
-       </div>`
-    : "";
-
-  const drawerHtml = `
-    <div>
-      <button type="button" class="emo-drawer-toggle" data-action="toggle-emotives"
-        aria-expanded="${state.emotivesOpen}">
-        <span>Emotives</span>
-        <svg class="emo-chevron${state.emotivesOpen ? " is-open" : ""}" width="14" height="14"
-          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
-      </button>
-      ${state.emotivesOpen ? `<div class="emo-drawer-body">${layersHtml}${modifiersHtml}</div>` : ""}
-    </div>`;
+        const assigned = key === currentKey;
+        return `<div class="emo-container${assigned ? " is-current" : ""}">
+          <button type="button" class="emo-recipe"
+            data-recipe-key="${escapeHtml(key)}" aria-pressed="${assigned}"
+            ${assigned ? 'aria-current="true"' : ''}>
+            <span class="emo-items">${escapeHtml(recipe.items.join(", "))}</span>
+            ${assigned ? '<span class="emo-source">Applied</span>' : `<span class="emo-reference"><span class="emo-source">${escapeHtml(recipe.source || '')}</span><span class="emo-use" aria-hidden="true">Use</span></span>`}
+          </button>
+          ${assigned ? `<button type="button" class="emo-x" data-action="remove-section-recipe"
+            title="Remove from this section" aria-label="Remove from this section">×</button>` : !usedKeys.has(key) ? `<button type="button" class="emo-x emo-delete"
+            data-action="delete-recipe" data-recipe-key="${escapeHtml(key)}"
+            title="Delete recipe" aria-label="Delete recipe">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>
+          </button>` : ''}
+        </div>`;
+      }).join('')
+    : '<div class="emo-empty">No recipes yet. Type one above.</div>';
 
   state.overlay.innerHTML = `
     <div class="emo-dialog" role="dialog" aria-modal="true" aria-label="Emotive recipes">
@@ -4144,8 +4120,7 @@ function renderEmotiveDialog() {
         <button type="button" class="emo-x" data-action="close" aria-label="Close">×</button>
       </div>
       <div class="emo-body">
-        ${currentHtml}
-        <div>
+        <div class="emo-add-section">
           <div class="emo-section-head"><span>Type a recipe</span></div>
           <div class="emo-text-row">
             <input type="text" class="emo-text-input" spellcheck="false" autocomplete="off"
@@ -4155,23 +4130,14 @@ function renderEmotiveDialog() {
           </div>
           <div class="emo-text-error" role="alert">${escapeHtml(state.textError)}</div>
         </div>
-        ${drawerHtml}
-        <div>
-          <div class="emo-section-head">
-            <span>New recipe</span>
-            <button type="button" class="emo-btn emo-add-btn" data-action="add" ${composing ? "disabled" : ""}>+ Add</button>
-          </div>
-          ${composeHtml}
-        </div>
         <div>
           <div class="emo-section-head"><span>Recipes</span></div>
           <div class="emo-recipes">${recipesHtml}</div>
         </div>
       </div>
       <div class="emo-footer">
-        <button type="button" class="emo-btn" data-action="close">Cancel</button>
-        <button type="button" class="emo-btn emo-btn-primary" data-action="apply"
-          ${state.selectedKey ? "" : "disabled"}>Add recipe to Section</button>
+        <button type="button" class="emo-btn" data-action="cancel">Cancel</button>
+        <button type="button" class="emo-btn emo-btn-primary" data-action="close">Done</button>
       </div>
     </div>`;
 }
@@ -4180,7 +4146,8 @@ function handleEmotiveDialogClick(event) {
   const state = emotiveState;
   if (!state) return;
 
-  const target = event.target.closest("button");
+  const target = event.target.closest("button") ||
+    event.target.closest(".emo-container")?.querySelector(".emo-recipe");
   if (!target || target.disabled || !state.overlay.contains(target)) return;
 
   const action = target.dataset.action;
@@ -4190,28 +4157,27 @@ function handleEmotiveDialogClick(event) {
     return;
   }
 
-  if (action === "toggle-emotives") {
-    state.emotivesOpen = !state.emotivesOpen;
+  if (action === "remove-section-recipe") {
+    const removed = getSectionRecipeItems(state.lineIndex);
+    if (removeEmotiveRecipeFromSection(state.lineIndex)) {
+      const key = emotiveRecipeKey(removed);
+      if (removed.length && !emotiveSessionRecipes.some(items => emotiveRecipeKey(items) === key)) {
+        emotiveSessionRecipes.push(removed);
+      }
+      state.recipes = getEmotiveRecipeLibrary();
+    }
     renderEmotiveDialog();
     return;
   }
 
-  if (action === "remove-section-recipe") {
-    // Keep the removed recipe available in the list so it isn't lost.
-    const removed = orderEmotiveRecipe(
-      getSectionRecipeItems(state.lineIndex).filter(isEmotiveItem).map((item) => item.toLowerCase())
-    );
-    const removedKey = emotiveRecipeKey(removed);
-
-    if (removed.length && removeEmotiveRecipeFromSection(state.lineIndex)) {
-      if (!state.recipes.some((r) => emotiveRecipeKey(r.items) === removedKey)) {
-        state.recipes.push({ items: removed, source: "" });
-        emotiveSessionRecipes.push(removed);
-      }
-    } else if (!removed.length) {
-      removeEmotiveRecipeFromSection(state.lineIndex);
+  if (action === "delete-recipe") {
+    const key = target.dataset.recipeKey;
+    if (collectFileEmotiveRecipes().some(recipe => emotiveRecipeKey(recipe.items) === key)) return;
+    // Preserve the array identity held by the song cache.
+    for (let i = emotiveSessionRecipes.length - 1; i >= 0; i--) {
+      if (emotiveRecipeKey(emotiveSessionRecipes[i]) === key) emotiveSessionRecipes.splice(i, 1);
     }
-
+    state.recipes = getEmotiveRecipeLibrary();
     renderEmotiveDialog();
     return;
   }
@@ -4221,54 +4187,28 @@ function handleEmotiveDialogClick(event) {
     return;
   }
 
-  if (action === "add") {
-    state.emotivesOpen = true;
-    state.draft = [];
-    renderEmotiveDialog();
-    return;
-  }
-
-  if (action === "apply") {
-    const recipe = state.recipes.find((r) => emotiveRecipeKey(r.items) === state.selectedKey);
-    if (!recipe) return;
-    const lineIndex = state.lineIndex;
+  if (action === "cancel") {
+    if (editor.value !== state.originalText) {
+      replaceEditorTextWithManualUndo(state.originalText);
+      refreshEditorView();
+    }
+    emotiveSessionRecipes.splice(0, emotiveSessionRecipes.length, ...state.originalRecipes);
     closeEmotiveRecipeDialog();
-    applyEmotiveRecipeToSection(lineIndex, recipe.items);
-    return;
-  }
-
-  if (target.dataset.emotive && Array.isArray(state.draft)) {
-    const term = target.dataset.emotive;
-
-    if (state.draft.includes(term)) {
-      state.draft = state.draft.filter((item) => item !== term);
-    } else {
-      const displaced = EMOTIVE_CONFLICTS[term] || [];
-      state.draft = [...state.draft.filter((item) => !displaced.includes(item)), term];
-    }
-
-    renderEmotiveDialog();
-    return;
-  }
-
-  if (target.classList.contains("emo-done") && state.draft?.length) {
-    const items = orderEmotiveRecipe(state.draft);
-    const key = emotiveRecipeKey(items);
-
-    if (!state.recipes.some((r) => emotiveRecipeKey(r.items) === key)) {
-      state.recipes.push({ items, source: "" });
-      emotiveSessionRecipes.push(items);
-    }
-
-    state.selectedKey = key;
-    state.draft = null;
-    renderEmotiveDialog();
     return;
   }
 
   if (target.dataset.recipeKey) {
-    state.selectedKey = target.dataset.recipeKey;
-    renderEmotiveDialog();
+    const recipe = state.recipes.find(r => emotiveRecipeKey(r.items) === target.dataset.recipeKey);
+    if (!recipe || emotiveRecipeKey(getSectionRecipeItems(state.lineIndex)) === target.dataset.recipeKey) return;
+    const previous = getSectionRecipeItems(state.lineIndex);
+    if (applyEmotiveRecipeToSection(state.lineIndex, recipe.items)) {
+      if (previous.length && !emotiveSessionRecipes.some(items => emotiveRecipeKey(items) === emotiveRecipeKey(previous))) {
+        emotiveSessionRecipes.push(previous);
+      }
+      state.recipes = getEmotiveRecipeLibrary();
+      renderEmotiveDialog();
+      state.overlay.querySelector('.emo-recipe[aria-current="true"]')?.focus();
+    }
   }
 }
 
