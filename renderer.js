@@ -3499,7 +3499,7 @@ const EMOTIVE_LAYERS = [
 ];
 
 // Focus modifiers: not paired axes. They mark relative semantic importance.
-const EMOTIVE_MODIFIERS = ["strong", "emphasis", "diminished"];
+const EMOTIVE_MODIFIERS = ["diminished", "emphasis", "strong"];
 
 const EMOTIVE_DEFINITIONS = {
   rise: "Directional upward progression in motion or intensity.",
@@ -3595,22 +3595,50 @@ function installEmotiveRecipeStyles() {
 .emo-layer-name { margin: 10px 0 6px; font-size: 11px; color: var(--emo-muted); }
 .emo-layer-name:first-of-type { margin-top: 0; }
 .emo-hint, .emo-empty { color: var(--emo-muted); font-size: 13px; }
-.emo-drawer-toggle {
-  display: flex; align-items: center; justify-content: space-between; width: 100%;
-  font: inherit; color: var(--emo-muted); background: transparent; border: none;
-  padding: 2px 0; cursor: pointer;
-  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-}
-.emo-drawer-toggle:hover { color: var(--emo-fg); }
-.emo-chevron { transition: transform .15s ease; transform: rotate(-90deg); }
-.emo-chevron.is-open { transform: rotate(0deg); }
-.emo-drawer-body { margin-top: 8px; }
 .emo-delete { border-color: var(--emo-border); color: var(--emo-muted); }
 .emo-delete:hover:not(:disabled) { background: #d9534f; border-color: #d9534f; color: #fff; }
-.emo-text-row { display: flex; gap: 8px; }
-.emo-text-input { flex: 1; min-width: 0; font: inherit; color: inherit; background: rgba(127,127,127,.12);
-  border: 1px solid var(--emo-border); border-radius: 8px; padding: 6px 10px; }
+.emo-text-row { display: flex; gap: 8px; position: relative; }
+.emo-text-wrap { position: relative; flex: 1; min-width: 0; }
+.emo-text-input { width: 100%; box-sizing: border-box; font: inherit; color: inherit; background: rgba(127,127,127,.12);
+  border: 1px solid var(--emo-border); border-radius: 8px; padding: 6px 104px 6px 10px; }
 .emo-text-input:focus-visible { outline: 2px solid var(--emo-accent); outline-offset: 1px; }
+.emo-show-emotives {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  border: 0; padding: 2px 4px; background: transparent; color: var(--emo-accent);
+  font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.emo-show-emotives:hover { text-decoration: underline; }
+.emo-helper-drawer {
+  display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(6px);
+  transition: grid-template-rows .18s ease, opacity .15s ease, transform .18s ease;
+  pointer-events: none;
+}
+.emo-helper-drawer.is-open {
+  grid-template-rows: 1fr; opacity: 1; transform: translateY(0); pointer-events: auto;
+}
+.emo-helper-drawer-inner { min-height: 0; overflow: hidden; }
+.emo-helper-panel {
+  margin-bottom: 8px; padding: 10px; border: 1px solid var(--emo-border); border-radius: 10px;
+  background: rgba(18,20,24,.98); box-shadow: 0 -10px 28px rgba(0,0,0,.28);
+}
+.emo-helper-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.emo-helper-title { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--emo-muted); }
+.emo-helper-close { border: 0; background: transparent; color: var(--emo-muted); font: inherit; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 3px; }
+.emo-helper-close:hover { color: var(--emo-fg); }
+.emo-helper-layer + .emo-helper-layer { margin-top: 8px; }
+.emo-helper-layer-name { margin-bottom: 4px; font-size: 10px; color: var(--emo-muted); }
+.emo-helper-pairs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.emo-helper-pair { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.emo-helper-modifiers { display: grid; grid-template-columns: repeat(3, 1fr); }
+.emo-helper-choice {
+  font: inherit; color: inherit; background: transparent; border: 1px solid var(--emo-border);
+  padding: 5px 7px; cursor: pointer;
+}
+.emo-helper-choice:not(:last-child) { border-right-width: 0; }
+.emo-helper-choice:first-child { border-radius: 7px 0 0 7px; }
+.emo-helper-choice:last-child { border-radius: 0 7px 7px 0; }
+.emo-helper-choice:hover { background: rgba(127,127,127,.2); }
+.emo-helper-choice.is-on { background: var(--emo-accent); color: var(--emo-accent-fg); border-color: var(--emo-accent); font-weight: 600; }
 .emo-text-error { margin-top: 6px; color: #ff8a8a; font-size: 12px; }
 .emo-text-error:empty { display: none; }
 
@@ -3970,6 +3998,87 @@ function parseEmotiveRecipeText(text) {
   return { items: orderEmotiveRecipe(items) };
 }
 
+function getEmotiveTextTokens(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isEmotiveTextTermSelected(value, term) {
+  return getEmotiveTextTokens(value).some((token) => token.split("--")[0] === term);
+}
+
+function renderEmotiveInputPalette(state) {
+  const layers = EMOTIVE_LAYERS.map((layer) => `
+    <div class="emo-helper-layer">
+      <div class="emo-helper-layer-name">${escapeHtml(layer.name)}</div>
+      <div class="emo-helper-pairs">
+        ${layer.axes.map(({ pair }) => `
+          <div class="emo-helper-pair">
+            ${pair.map((term) => `<button type="button"
+              class="emo-helper-choice${isEmotiveTextTermSelected(state.textValue, term) ? " is-on" : ""}"
+              data-action="toggle-input-emotive" data-emotive="${escapeHtml(term)}"
+              aria-pressed="${isEmotiveTextTermSelected(state.textValue, term)}">${escapeHtml(term)}</button>`).join("")}
+          </div>`).join("")}
+      </div>
+    </div>`).join("");
+
+  const modifiers = `
+    <div class="emo-helper-layer">
+      <div class="emo-helper-layer-name">Modifiers</div>
+      <div class="emo-helper-modifiers">
+        ${EMOTIVE_MODIFIERS.map((term) => `<button type="button"
+          class="emo-helper-choice${isEmotiveTextTermSelected(state.textValue, term) ? " is-on" : ""}"
+          data-action="toggle-input-emotive" data-emotive="${escapeHtml(term)}"
+          aria-pressed="${isEmotiveTextTermSelected(state.textValue, term)}">${escapeHtml(term)}</button>`).join("")}
+      </div>
+    </div>`;
+
+  return layers + modifiers;
+}
+
+function syncEmotiveInputPalette() {
+  const state = emotiveState;
+  if (!state) return;
+
+  state.overlay.querySelectorAll(".emo-helper-choice[data-emotive]").forEach((button) => {
+    const selected = isEmotiveTextTermSelected(state.textValue, button.dataset.emotive);
+    button.classList.toggle("is-on", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+function toggleEmotiveInputTerm(term) {
+  const state = emotiveState;
+  if (!state || !EMOTIVE_VOCAB.has(term)) return;
+
+  let tokens = getEmotiveTextTokens(state.textValue);
+  const selected = tokens.some((token) => token.split("--")[0] === term);
+
+  if (selected) {
+    tokens = tokens.filter((token) => token.split("--")[0] !== term);
+  } else {
+    const conflicts = new Set(EMOTIVE_CONFLICTS[term] || []);
+    tokens = tokens.filter((token) => !conflicts.has(token.split("--")[0]));
+    tokens.push(term);
+  }
+
+  state.textValue = tokens.join(", ");
+  state.textError = "";
+
+  const input = state.overlay.querySelector(".emo-text-input");
+  if (input) {
+    input.value = state.textValue;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  const errorEl = state.overlay.querySelector(".emo-text-error");
+  if (errorEl) errorEl.textContent = "";
+  syncEmotiveInputPalette();
+}
+
 function submitEmotiveTextRecipe() {
   const state = emotiveState;
   if (!state) return;
@@ -4015,6 +4124,8 @@ function handleEmotiveDialogInput(event) {
     const errorEl = state.overlay.querySelector(".emo-text-error");
     if (errorEl) errorEl.textContent = "";
   }
+
+  syncEmotiveInputPalette();
 }
 
 /* ---------- popup ---------- */
@@ -4105,6 +4216,7 @@ function openEmotiveRecipeDialog(lineIndex) {
     originalRecipes: emotiveSessionRecipes.map(items => [...items]),
     textValue: "",
     textError: "",
+    paletteOpen: false,
     overlay,
     previousFocus: document.activeElement
   };
@@ -4203,10 +4315,24 @@ function renderEmotiveDialog() {
       <div class="emo-body">
         <div class="emo-add-section">
           <div class="emo-section-head"><span>Type a recipe</span></div>
+          <div class="emo-helper-drawer${state.paletteOpen ? " is-open" : ""}" aria-hidden="${!state.paletteOpen}">
+            <div class="emo-helper-drawer-inner">
+              <div class="emo-helper-panel">
+                <div class="emo-helper-head">
+                  <span class="emo-helper-title">Emotives</span>
+                  <button type="button" class="emo-helper-close" data-action="hide-emotives" aria-label="Close emotives">×</button>
+                </div>
+                ${renderEmotiveInputPalette(state)}
+              </div>
+            </div>
+          </div>
           <div class="emo-text-row">
-            <input type="text" class="emo-text-input" spellcheck="false" autocomplete="off"
-              placeholder="energetic, swell, strong" aria-label="Recipe as text"
-              value="${escapeHtml(state.textValue)}">
+            <div class="emo-text-wrap">
+              <input type="text" class="emo-text-input" spellcheck="false" autocomplete="off"
+                placeholder="energetic, swell, strong" aria-label="Recipe as text"
+                value="${escapeHtml(state.textValue)}">
+              <button type="button" class="emo-show-emotives" data-action="toggle-emotives">${state.paletteOpen ? "Hide emotives" : "Show emotives"}</button>
+            </div>
             <button type="button" class="emo-btn" data-action="add-text">Add recipe</button>
           </div>
           <div class="emo-text-error" role="alert">${escapeHtml(state.textError)}</div>
@@ -4260,6 +4386,42 @@ function handleEmotiveDialogClick(event) {
     }
     state.recipes = getEmotiveRecipeLibrary();
     renderEmotiveDialog();
+    return;
+  }
+
+  if (action === "toggle-emotives") {
+    state.paletteOpen = !state.paletteOpen;
+    const drawer = state.overlay.querySelector(".emo-helper-drawer");
+    const toggle = state.overlay.querySelector(".emo-show-emotives");
+
+    if (drawer) {
+      drawer.classList.toggle("is-open", state.paletteOpen);
+      drawer.setAttribute("aria-hidden", String(!state.paletteOpen));
+    }
+
+    if (toggle) {
+      toggle.textContent = state.paletteOpen ? "Hide emotives" : "Show emotives";
+    }
+
+    if (state.paletteOpen) syncEmotiveInputPalette();
+    return;
+  }
+
+  if (action === "hide-emotives") {
+    state.paletteOpen = false;
+    const drawer = state.overlay.querySelector(".emo-helper-drawer");
+    if (drawer) {
+      drawer.classList.remove("is-open");
+      drawer.setAttribute("aria-hidden", "true");
+    }
+    const toggle = state.overlay.querySelector(".emo-show-emotives");
+    if (toggle) toggle.textContent = "Show emotives";
+    state.overlay.querySelector(".emo-text-input")?.focus();
+    return;
+  }
+
+  if (action === "toggle-input-emotive") {
+    toggleEmotiveInputTerm(target.dataset.emotive);
     return;
   }
 
