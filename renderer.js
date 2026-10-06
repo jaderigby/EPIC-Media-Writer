@@ -1345,6 +1345,7 @@ function restoreSessionState() {
 }
 
 function resetSession() {
+  switchEmotiveRecipeSong("");
   currentFilePath = "";
   currentMetadata = null;
   metadataEditMode = false;
@@ -2883,9 +2884,6 @@ openBtn.addEventListener("click", async () => {
   try {
     if (!(await confirmDiscardUnsavedChanges())) return;
 
-    const hadExistingSession =
-      Boolean(currentFilePath || linkedAudioPath);
-
     const result = await window.EpicInspector.openMedia();
 
     if (!result) return;
@@ -2893,9 +2891,8 @@ openBtn.addEventListener("click", async () => {
     manualUndoStack = [];
     manualRedoStack = [];
 
-    if (hadExistingSession) {
-      resetSession();
-    }
+    resetSession();
+    switchEmotiveRecipeSong(result.filePath || "");
 
     if (result.filePath) {
       currentFilePath = result.filePath;
@@ -3086,6 +3083,7 @@ storeAudioBtn?.addEventListener("click", async () => {
     }
 
     if (result.useExistingEpicx) {
+      switchEmotiveRecipeSong(result.filePath);
       currentFilePath = result.filePath;
       linkedAudioPath = "";
 
@@ -3548,9 +3546,21 @@ const EMOTIVE_CONFLICTS = (() => {
 const EMOTIVE_VOCAB = new Set(Object.keys(EMOTIVE_DEFINITIONS));
 const SECTION_LABEL_LINE_RE = /^(\s*)\[([^{\]]*?)\s*(?:\{\{([\s\S]*?)\}\})?\s*\](\s*)$/;
 
-// Recipes composed this session (they stay available even if not yet used).
+// Unused recipes belong to the song where they were composed. Keep them
+// available when returning to that file, without sharing them with other songs.
+const emotiveRecipesBySong = new Map();
 let emotiveSessionRecipes = [];
 let emotiveState = null;
+
+function switchEmotiveRecipeSong(nextFilePath) {
+  closeEmotiveRecipeDialog();
+  if (currentFilePath) {
+    emotiveRecipesBySong.set(currentFilePath, emotiveSessionRecipes);
+  }
+  emotiveSessionRecipes = nextFilePath
+    ? emotiveRecipesBySong.get(nextFilePath) || []
+    : [];
+}
 
 function installEmotiveRecipeStyles() {
   const css = `
