@@ -6,10 +6,12 @@
   "description": "A light - but powerful - writing environment for authoring EPIC media and inspecting audio file metadata properties.",
   "main": "main.js",
   "scripts": {
-    "test": "node vendor/audio-meta-armor/test.js && node test/metadata-preservation.test.js && node test/emotive-song-scope.test.js",
+    "test": "node vendor/audio-meta-armor/test.js && node test/metadata-preservation.test.js && node test/emotive-song-scope.test.js && node test/editor-syntax.test.mjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "make": "electron-forge make",
+    "build:editor": "node scripts/build-editor.cjs",
+    "test:editor": "npm run build:editor && node test/editor-integration.test.cjs"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.8.1",
@@ -22,6 +24,13 @@
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron/fuses": "^1.8.0",
     "@electron/notarize": "^3.1.1",
-    "electron": "^36.0.0"
+    "@playwright/test": "^1.63.0",
+    "electron": "^36.0.0",
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13"
   }
 }

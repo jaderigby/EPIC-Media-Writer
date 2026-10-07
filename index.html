@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>EPIC Media Writer</title>
+  <link rel="stylesheet" href="./lib/shortcut-help.css">
   <style>
     /* @font-face {
       font-family: "Space Mono";
@@ -50,8 +51,7 @@
       border: 1px solid var(--black-cherry-border);
     }
 
-    #editor,
-    #editorGhost {
+    #editor {
       border: 1px solid var(--black-cherry-border);
     }
 
@@ -511,42 +511,7 @@
       min-height: 0;
     }
 
-    #editor,
-    #editorGhost {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      box-sizing: border-box;
-      /* border: 1px solid #444; */
-      padding: 14px;
-      font-family: var(--mono-font);
-      font-size: 13px;
-      line-height: 1.45;
-      white-space: pre-wrap;
-    }
 
-    #editorGhost {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      color: #777;
-      background: #050505;
-      opacity: 0.55;
-    }
-
-    #editor {
-      position: absolute;
-      inset: 0;
-      background: transparent;
-      color: transparent;
-      caret-color: #f4f4f4;
-      resize: none;
-    }
-
-    /* #editor.has-ghost {
-      color: transparent;
-      caret-color: #f4f4f4;
-    } */
 
 
 
@@ -714,63 +679,18 @@
 
 
 
-    #editor,
-    #editorGhost,
-    #editorHighlight {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      box-sizing: border-box;
-      padding: 14px;
-      font-family: var(--mono-font);
-      font-size: 13px;
-      line-height: 19px;
-      white-space: pre-wrap;
-      overflow-wrap: normal;
-      word-break: normal;
-    }
-
-    #editorHighlight {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: #050505;
-      color: #f4f4f4;
-    }
-
-    #editorGhost {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      color: #777;
-      background: transparent;
-      opacity: 0.55;
-    }
-
-    #editor {
-      position: relative;
-      background: transparent;
-      color: transparent;
-      caret-color: #f4f4f4;
-      resize: none;
-    }
-
-    #editorHighlight,
-    #editorGhost {
-      overflow: hidden;
-    }
-
-    #editorShell {
-      position: relative;
-      flex: 1 1 auto;
-      min-height: 0;
-    }
-
-    #editor,
-    #editorGhost,
-    #editorHighlight {
-      position: absolute;
-      inset: 0;
+    #editor { position: absolute; inset: 0; overflow: hidden; }
+    #editor:focus-within { border-color: transparent; outline: 1px solid #46b5c4; }
+    #editor .cm-focused { box-shadow: inset 0 0 15px rgba(70, 181, 196, 0.5); }
+    #editor .cm-epic-entry { background: rgb(66 164 245 / 7%); }
+    #editor .cm-epic-entry-start { border-radius: 5px 5px 0 0; }
+    #editor .cm-epic-entry-end { border-radius: 0 0 5px 5px; }
+    #editor .cm-epic-freeflow { background: #1d1622; }
+    #editor .cm-epic-freeflow-opener { color: #c490dd; background: #31213c; }
+    #editor .cm-epic-list { color: #f3d9b8; }
+    #editor .cm-epic-flash { animation: epic-section-flash-fade 1400ms ease-out both; }
+    @keyframes epic-section-flash-fade {
+      from { background-color: rgba(124, 156, 255, .24); }
     }
 
     .epic-header {
@@ -1342,9 +1262,7 @@
               <use href="icons.svg#numeric-ordering-icon"></use>
             </svg>
           </button>
-          <pre id="editorHighlight" aria-hidden="true"></pre>
-          <pre id="editorGhost" aria-hidden="true"></pre>
-          <textarea id="editor" spellcheck="false"></textarea>
+          <div id="editor"></div>
         </div>
       <div id="status"></div>
       <div id="validationStatus"></div>
@@ -1394,6 +1312,8 @@
   </div>
 
   <script src="./lib/project-text-merge.js"></script>
+  <script src="./dist/editor.js"></script>
+  <script src="./lib/shortcut-help.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

@@ -262,6 +262,15 @@ function createApplicationMenu(win) {
         { type: "separator" },
         { role: "togglefullscreen" }
       ]
+    },
+    {
+      label: "Help",
+      submenu: [{
+        label: "Keyboard Shortcuts & Tab Triggers…",
+        click: () => {
+          if (!win.isDestroyed()) win.webContents.send("shortcuts:show");
+        }
+      }]
     }
   );
 
