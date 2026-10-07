@@ -1,0 +1,133 @@
+const { _electron: electron } = require('@playwright/test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+
+(async () => {
+  const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'epic-tabs-test-'));
+  const env = { ...process.env, EPIC_TEST_USER_DATA: userData };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const application = await electron.launch({ args: [path.join(__dirname, 'editor-electron-main.cjs')], env });
+  try {
+    const page = await application.firstWindow();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.waitForSelector('.cm-content');
+    const text = () => page.evaluate(() => editor.value);
+    const tab = name => page.locator('.file-tab-select').filter({ hasText: name });
+    const open = async (filePath, text, metadata = null) => {
+      await application.evaluate((_, file) => global.setNextFile(file), metadata
+        ? { filePath, kind: 'audio', epicx: text, metadata }
+        : { filePath, kind: 'text', text });
+      await page.locator('#openBtn').click();
+      await page.waitForFunction(filePath => currentFilePath === filePath && fileOperationDepth === 0, filePath);
+    };
+    const typeAtEnd = async value => {
+      await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
+      await page.keyboard.type(value);
+    };
+    const originalA = '[Verse]\n' + Array.from({ length: 100 }, (_, i) => `Lyric ${i}`).join('\n');
+    await open('/test/Alpha.epic', originalA);
+    assert.equal(await page.locator('.file-tab').count(), 1, 'First file replaces pristine initial tab');
+    await typeAtEnd(' A edit');
+    await page.evaluate(() => { emotiveSessionRecipes.push(['open']); editor.setSelectionRange(10); });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.evaluate(() => { editor.scrollTop = 350; });
+    await open('/test/Beta.epic', '[Chorus]\nBeta');
+    assert.equal(await page.locator('.file-tab').count(), 2);
+    assert.equal(await page.locator('#confirmModal:not(.hidden)').count(), 0, 'Opening a second file keeps unsaved first file without prompting');
+    assert.equal(await page.evaluate(() => editor.undo()), false);
+    await typeAtEnd(' B edit');
+    await page.evaluate(() => emotiveSessionRecipes.push(['swell']));
+    await tab('Alpha').click();
+    assert.equal(await text(), originalA + ' A edit');
+    assert.equal(await page.evaluate(() => editor.selectionStart), 10);
+    await page.waitForFunction(() => Math.abs(editor.scrollTop - 350) < 2);
+    assert.deepEqual(await page.evaluate(() => emotiveSessionRecipes), [['open']]);
+    assert.equal(await page.evaluate(() => editor.undo()), true);
+    assert.equal(await text(), originalA);
+    await page.evaluate(() => editor.redo());
+    assert.equal(await text(), originalA + ' A edit');
+    await tab('Beta').click();
+    assert.equal(await text(), '[Chorus]\nBeta B edit');
+    assert.deepEqual(await page.evaluate(() => emotiveSessionRecipes), [['swell']]);
+    await page.evaluate(() => editor.undo());
+    assert.equal(await text(), '[Chorus]\nBeta');
+    await page.evaluate(() => editor.redo());
+    // A duplicate open activates the edited document, not its disk contents.
+    await open('/test/Alpha.epic', 'Stale disk contents');
+    assert.equal(await page.locator('.file-tab').count(), 2);
+    assert.equal(await text(), originalA + ' A edit');
+    await page.evaluate(() => performSave());
+    assert.deepEqual(await application.evaluate(() => global.lastSave), { filePath: '/test/Alpha.epic', text: originalA + ' A edit' });
+    assert.ok(!(await tab('Alpha').innerText()).includes('•'));
+    assert.ok((await tab('Beta').innerText()).includes('•'));
+    await tab('Beta').click();
+    await page.getByRole('button', { name: 'Close Beta.epic', exact: true }).click();
+    await page.waitForSelector('#confirmModal:not(.hidden)');
+    await page.locator('#confirmModalCancelBtn').click();
+    assert.equal(await page.locator('.file-tab').count(), 2);
+    assert.equal(await text(), '[Chorus]\nBeta B edit');
+    await page.evaluate(() => saveSessionState());
+    await page.reload();
+    await page.waitForSelector('.cm-content');
+    assert.equal(await page.locator('.file-tab').count(), 2);
+    assert.equal(await text(), '[Chorus]\nBeta B edit');
+    assert.deepEqual(await page.evaluate(() => emotiveSessionRecipes), [['swell']]);
+    await tab('Alpha').click();
+    assert.equal(await text(), originalA + ' A edit');
+    assert.deepEqual(await page.evaluate(() => emotiveSessionRecipes), [['open']]);
+    await tab('Beta').click();
+    await page.getByRole('button', { name: 'Close Beta.epic', exact: true }).click();
+    await page.locator('#confirmModalYesBtn').click();
+    await page.waitForFunction(() => fileTabs.length === 1);
+    assert.equal(await text(), originalA + ' A edit');
+    await page.locator('#newFileTab').click();
+    await typeAtEnd('Untitled draft');
+    await tab('Alpha').click();
+    await tab('Untitled').click();
+    assert.equal(await text(), 'Untitled draft');
+    assert.equal(await page.evaluate(() => editor.undo()), true);
+    assert.equal(await text(), '');
+
+    // Audio metadata remains attached to its tab, including an unfinished form.
+    await open('/test/Audio.wav', '[Verse]\nAudio', { format: 'wav', listInfo: { INAM: 'Audio title' }, wavChunks: [] });
+    await page.evaluate(() => renderMetadataEditForm(currentMetadata));
+    await page.locator('#standardTitle').fill('Draft title');
+    await tab('Alpha').click();
+    await tab('Audio.wav').click();
+    assert.equal(await page.locator('#standardTitle').inputValue(), 'Draft title');
+    assert.equal(await page.evaluate(() => currentMetadata.listInfo.INAM), 'Audio title');
+    await page.evaluate(() => saveSessionState());
+    await page.reload();
+    await page.waitForSelector('#standardTitle');
+    assert.equal(await page.locator('#standardTitle').inputValue(), 'Draft title');
+    await page.getByRole('button', { name: 'Close Audio.wav', exact: true }).click();
+    await page.waitForSelector('#confirmModal:not(.hidden)');
+    await page.locator('#confirmModalCancelBtn').click();
+    await tab('Alpha').click();
+    // A save remains attached to its tab; later typing is still marked unsaved.
+    await typeAtEnd(' submitted');
+    const submitted = await text();
+    await application.evaluate(() => global.delayNextSave());
+    await page.evaluate(() => { window.pendingTestSave = performSave(); });
+    await page.waitForFunction(() => fileOperationDepth > 0);
+    assert.equal(await tab('Audio.wav').isDisabled(), true);
+    const savingTab = await page.evaluate(() => activeFileTabId);
+    await page.evaluate(() => activateFileTab(fileTabs.find(tab => tab.currentFilePath === '/test/Audio.wav').id));
+    assert.equal(await page.evaluate(() => activeFileTabId), savingTab);
+    await typeAtEnd(' later typing');
+    await application.evaluate(() => global.finishSave());
+    await page.evaluate(() => window.pendingTestSave);
+    assert.equal(await page.evaluate(() => sourceEditorText), submitted);
+    assert.equal(await page.evaluate(() => hasUnsavedChanges()), true);
+    assert.equal((await application.evaluate(() => global.lastSave)).filePath, '/test/Alpha.epic');
+    assert.equal(await tab('Audio.wav').isDisabled(), false);
+    await page.screenshot({ path: path.join(userData, 'tabs.png') });
+    assert.deepEqual(errors, []);
+    console.log('File tabs passed: independent edits, undo, scroll, recipes, duplicate open, save routing, close confirmation, drafts and restart restoration.');
+    console.log(`Screenshot: ${path.join(userData, 'tabs.png')}`);
+  } finally { await application.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

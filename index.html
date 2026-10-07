@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <title>EPIC Media Writer</title>
   <link rel="stylesheet" href="./lib/shortcut-help.css">
+  <link rel="stylesheet" href="./lib/file-tabs.css">
   <style>
     /* @font-face {
       font-family: "Space Mono";
@@ -1238,7 +1239,7 @@
 
       <button
         id="clearSessionBtn"
-        title="Close session"
+        title="Close file"
       >
       <svg class="icon store-icon">
         <use href="icons.svg#close-circle-icon"></use>
@@ -1253,6 +1254,11 @@
       <span id="audioLinkInfo"></span>
     </div>
     </header>
+
+    <nav id="fileTabBar" aria-label="Open files">
+      <div id="fileTabList" role="tablist" aria-label="File tabs"></div>
+      <button id="newFileTab" type="button" title="New untitled file" aria-label="New untitled file">+</button>
+    </nav>
 
     <main>
       <section id="editorWrap">
@@ -1314,6 +1320,7 @@
   <script src="./lib/project-text-merge.js"></script>
   <script src="./dist/editor.js"></script>
   <script src="./lib/shortcut-help.js"></script>
+  <script src="./lib/file-tabs.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

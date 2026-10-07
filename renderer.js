@@ -787,6 +787,7 @@ function updateHeaderState() {
   
   updateSidebarState();
   updateStudioTimingMenuState();
+  renderFileTabs();
 }
 
 function getDisplayName(filePath) {
@@ -1154,125 +1155,8 @@ function handleStudioTimingMenuAction() {
   linkStudioTiming();
 }
 
-function saveSessionState() {
-  if (restoreInProgress) return;
-
-  const state = {
-    currentFilePath,
-    currentMetadata,
-    editorText: editor.value,
-    statusText: stripPinnedStatusText(statusEl.textContent),
-    validationText: validationStatusEl.textContent,
-    sourceEditorText,
-    linkedAudioPath,
-    studioTimingLink,
-    sourceHadContent,
-    rawMetadataOpen,
-    savedAt: new Date().toISOString()
-  };
-
-  localStorage.setItem(SESSION_KEY, JSON.stringify(state));
-}
-
-function restoreSessionState() {
-  const raw = localStorage.getItem(SESSION_KEY);
-  
-  if (!raw) return;
-
-  try {
-    restoreInProgress = true;
-
-    const state = JSON.parse(raw);
-    linkedAudioPath = state.linkedAudioPath || "";
-    studioTimingLink = state.studioTimingLink || null;
-
-    sourceHadContent = Boolean(state.sourceHadContent);
-    rawMetadataOpen = Boolean(state.rawMetadataOpen);
-
-    sourceEditorText = state.sourceEditorText || editor.value;
-
-    currentMetadata = state.currentMetadata || null;
-
-    currentFilePath = state.currentFilePath || "";
-    editor.load(state.editorText || "");
-    refreshEditorView();
-
-    filePathEl.textContent =
-      currentFilePath
-        ? getDisplayName(currentFilePath)
-        : "Unsaved EPIC session";
-
-    setStatus(state.statusText || "Restored session.");
-
-    validationStatusEl.textContent =
-      state.validationText || "";
-
-    saveBtn.disabled = false;
-
-    if (currentMetadata) {
-      renderMetadata(currentMetadata);
-      editMetadataBtn.disabled = false;
-    } else {
-      metadataPanel.textContent = "";
-      clearMetadataHeaderTabs();
-      editMetadataBtn.disabled = true;
-    }
-
-    if (editor.value.trim()) {
-      scheduleEpicValidation();
-    }
-    updateHeaderState();
-    updateStudioTimingMenuState();
-
-    if (studioTimingLink && canLinkStudioTiming()) {
-      startStudioTimingPolling();
-    }
-  } catch (err) {
-    console.warn("Failed to restore session:", err);
-  } finally {
-    restoreInProgress = false;
-  }
-}
-
-function resetSession() {
-  switchEmotiveRecipeSong("");
-  currentFilePath = "";
-  currentMetadata = null;
-  metadataEditMode = false;
-  rawMetadataOpen = false;
-
-  editor.load("");
-  refreshEditorView();
-
-  sourceEditorText = "";
-  sourceHadContent = false;
-
-  filePathEl.textContent = "No file loaded";
-
-  linkedAudioPath = "";
-  studioTimingLink = null;
-  stopStudioTimingPolling();
-
-  setStatus("");
-
-  validationStatusEl.textContent = "";
-
-  metadataPanel.textContent = "";
-  clearMetadataHeaderTabs();
-
-  saveBtn.disabled = true;
-
-  editMetadataBtn.disabled = true;
-
-  setEditMetadataBtnIcon(false);
-  editMetadataBtn.title = "Edit metadata";
-  updateNumericOrderingButton(null);
-
-  localStorage.removeItem(SESSION_KEY);
-  updateHeaderState();
-  updateStudioTimingMenuState();
-  showGhostHeaderIfAppropriate();
-}
+function saveSessionState() { persistFileTabs(); }
+function restoreSessionState() { restoreFileTabs(); }
 
 function replaceEditorText(nextText) {
   editor.value = nextText;
@@ -1284,11 +1168,14 @@ function scheduleEpicValidation() {
   parseTimer = setTimeout(async () => {
     if (!window.EpicInspector?.parseEpic) return;
 
+    const epoch = fileTabEpoch;
+    const source = editor.value;
     try {
       const result = await window.EpicInspector.parseEpic({
-        source: editor.value
+        source
       });
 
+      if (epoch !== fileTabEpoch || editor.value !== source) return;
       lastEpicValidationResult = result;
       updateNumericOrderingButton(result);
 
@@ -1313,6 +1200,7 @@ function scheduleEpicValidation() {
         saveSessionState();
       }
     } catch (err) {
+      if (epoch !== fileTabEpoch || editor.value !== source) return;
       validationStatusEl.textContent =
         `Parser failed:\n${err.message || err}`;
       
@@ -1444,7 +1332,7 @@ numericOrderingBtn?.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
-numericOrderingBtn?.addEventListener("click", async () => {
+numericOrderingBtn?.addEventListener("click", lockFileOperation(async () => {
   if (!window.EpicInspector?.parseEpic) return;
 
   const result = await window.EpicInspector.parseEpic({
@@ -1486,7 +1374,7 @@ numericOrderingBtn?.addEventListener("click", async () => {
     updateHeaderState();
     saveSessionState();
   }
-});
+}));
 
 function formatParseIssue(issue) {
   if (typeof issue === "string") return issue;
@@ -1928,10 +1816,7 @@ function renderMetadataEditForm(metadata) {
   renderMetadata(metadata);
 }
 
-clearSessionBtn?.addEventListener("click", async () => {
-  if (!(await confirmDiscardUnsavedChanges())) return;
-  resetSession();
-});
+clearSessionBtn?.addEventListener("click", () => closeFileTab(activeFileTabId));
 
 editMetadataBtn?.addEventListener("click", () => {
   if (!currentMetadata) return;
@@ -2525,86 +2410,40 @@ editor.addEventListener("keydown", (event) => {
   }
 });
 
-openBtn.addEventListener("click", async () => {
-  try {
-    if (!(await confirmDiscardUnsavedChanges())) return;
-
-    const result = await window.EpicInspector.openMedia();
-
-    if (!result) return;
-
-
-    resetSession();
-    switchEmotiveRecipeSong(result.filePath || "");
-
-    if (result.filePath) {
-      currentFilePath = result.filePath;
-    }
-
-    if (result.kind === "text") {
-      editor.load(result.text || "");
-      refreshEditorView();
-
-      sourceEditorText = editor.value;
-      sourceHadContent =
-        editor.value.trim().length > 0;
-
-      currentMetadata = null;
-      metadataEditMode = false;
-
-      metadataPanel.textContent = "";
-      clearMetadataHeaderTabs();
-      editMetadataBtn.disabled = true;
-      setEditMetadataBtnIcon(false);
-      editMetadataBtn.title = "Edit metadata";
-
-      filePathEl.textContent = getDisplayName(currentFilePath);
-      saveBtn.disabled = false;
-
-      statusEl.textContent = "Loaded EPIC text file.";
-
-      scheduleEpicValidation();
+function openResultInTab(result) {
+    const existing = fileTabs.find(tab => tab.currentFilePath === result.filePath);
+    if (existing) {
+      captureActiveFileTab();
+      applyFileTab(existing);
       saveSessionState();
-      updateHeaderState();
-
       return;
     }
+    const text = result.kind === 'text' ? result.text || '' : result.epicx || '';
+    addFileTab({
+      ...blankFileTab(), currentFilePath: result.filePath || '', editorText: text,
+      sourceEditorText: text, sourceHadContent: !!text.trim(),
+      currentMetadata: result.kind === 'text' ? null : result.metadata,
+      statusText: result.kind === 'text' ? 'Loaded EPIC text file.' : 'Loaded media'
+    });
+}
 
-    editor.load(result.epicx || "");
-    refreshEditorView();
-    
-    sourceEditorText = editor.value;
-    sourceHadContent =
-      sourceEditorText.trim().length > 0;
-
-    scheduleEpicValidation();
-    renderMetadata(result.metadata);
-
-    currentMetadata = result.metadata;
-    metadataEditMode = false;
-
-    setEditMetadataBtnIcon(false);
-    editMetadataBtn.title = "Edit metadata";
-    editMetadataBtn.disabled = false;
-
-    filePathEl.textContent = getDisplayName(currentFilePath);
-    saveBtn.disabled = false;
-
-    if (result.epicx) {
-      statusEl.textContent =
-        `Loaded media\n` +
-        `EPIC size: ${result.epicx.length} chars`;
-    } else {
-      statusEl.textContent = "Loaded media";
-    }
-
-    saveSessionState();
-    updateHeaderState();
-
+async function openMediaInTab() {
+  try {
+    const result = await window.EpicInspector.openMedia();
+    if (!result) return;
+    openResultInTab(result);
   } catch (err) {
     console.error(err);
     statusEl.textContent = `Open failed:\n${err.message || err}`;
   }
+}
+openBtn.addEventListener('click', () => {
+  if (canChangeFileTab()) openMediaInTab();
+});
+document.getElementById('newFileTab').addEventListener('click', () => {
+  if (!canChangeFileTab()) return;
+  addFileTab();
+  editor.focus();
 });
 
 function toggleTocDrawer() {
@@ -2683,7 +2522,7 @@ window.addEventListener("keydown", (event) => {
   if (isTypingTarget(active)) active.blur();
 });
 
-storeAudioBtn?.addEventListener("click", async () => {
+storeAudioBtn?.addEventListener("click", lockFileOperation(async () => {
   try {
     if (!isSavedTextProject()) {
       statusEl.textContent =
@@ -2777,7 +2616,7 @@ storeAudioBtn?.addEventListener("click", async () => {
     statusEl.textContent =
       `Link audio failed:\n${err.message || err}`;
   }
-});
+}));
 
 unlinkAudioBtn?.addEventListener("click", () => {
   linkedAudioPath = "";
@@ -2793,21 +2632,22 @@ async function saveCurrentTextFile({
   updateLinkedAudio = true,
   notifyStudio = true
 } = {}) {
+  const submittedText = editor.value;
   const result = await window.EpicInspector.saveText({
     filePath: currentFilePath,
-    text: editor.value
+    text: submittedText
   });
 
-  sourceEditorText = editor.value;
+  sourceEditorText = submittedText;
   sourceHadContent =
-    editor.value.trim().length > 0;
+    submittedText.trim().length > 0;
 
 
   if (updateLinkedAudio && linkedAudioPath) {
     const audioResult =
       await window.EpicInspector.storeInAudio({
         targetPath: linkedAudioPath,
-        epicx: editor.value,
+        epicx: submittedText,
         projectLabel:
           getDisplayName(currentFilePath) ||
           "Current project"
@@ -2844,13 +2684,14 @@ async function performSave({ saveAs = false } = {}) {
     }
     statusEl.textContent = saveAs ? "Save As..." : "Saving...";
 
+    const submittedText = editor.value;
     const isTextFile = /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");
 
     if (isTextFile && saveAs) {
       // Write the text to a new file and keep editing that file. Linked audio
       // and Studio are not touched; the next Save updates them as usual.
       const result = await window.EpicInspector.saveTextAs({
-        text: editor.value,
+        text: submittedText,
         defaultPath: currentFilePath
       });
 
@@ -2860,8 +2701,8 @@ async function performSave({ saveAs = false } = {}) {
       }
 
       currentFilePath = result.filePath;
-      sourceEditorText = editor.value;
-      sourceHadContent = editor.value.trim().length > 0;
+      sourceEditorText = submittedText;
+      sourceHadContent = submittedText.trim().length > 0;
 
       filePathEl.textContent = getDisplayName(currentFilePath);
       statusEl.textContent = `Saved as:\n${getDisplayName(result.filePath)}`;
@@ -2884,15 +2725,15 @@ async function performSave({ saveAs = false } = {}) {
 
     if (!currentFilePath) {
       const result = await window.EpicInspector.saveTextAs({
-        text: editor.value
+        text: submittedText
       });
 
       if (!result) return;
 
       currentFilePath = result.filePath;
-      sourceEditorText = editor.value;
+      sourceEditorText = submittedText;
       sourceHadContent =
-        editor.value.trim().length > 0;
+        submittedText.trim().length > 0;
 
 
       filePathEl.textContent = getDisplayName(currentFilePath);
@@ -2907,7 +2748,7 @@ async function performSave({ saveAs = false } = {}) {
 
     const result = await window.EpicInspector.saveMedia({
       filePath: linkedAudioPath || currentFilePath,
-      epicx: editor.value,
+      epicx: submittedText,
       saveAs
     });
 
@@ -2922,9 +2763,9 @@ async function performSave({ saveAs = false } = {}) {
     renderMetadata(result.reread);
 
     currentMetadata = result.reread;
-    sourceEditorText = editor.value;
+    sourceEditorText = submittedText;
     sourceHadContent =
-      editor.value.trim().length > 0;
+      submittedText.trim().length > 0;
 
     statusEl.textContent =
       `Save complete\n` +
@@ -3981,6 +3822,15 @@ function handleEmotiveDialogClick(event) {
 installEmotiveRecipeStyles();
 
 
+performSave = lockFileOperation(performSave);
+saveCurrentTextFile = lockFileOperation(saveCurrentTextFile);
+saveLinkedStudioProject = lockFileOperation(saveLinkedStudioProject);
+saveMetadataFieldChanges = lockFileOperation(saveMetadataFieldChanges);
+addAlbumArt = lockFileOperation(addAlbumArt);
+removeAlbumArt = lockFileOperation(removeAlbumArt);
+linkStudioTiming = lockFileOperation(linkStudioTiming);
+openMediaInTab = lockFileOperation(openMediaInTab);
+
 restoreSessionState();
 window.EpicInspector?.onEditorHistoryAction?.((action) => {
   editor.focus();
@@ -3990,3 +3840,58 @@ window.EpicInspector?.onEditorHistoryAction?.((action) => {
 window.EpicInspector?.onStudioTimingMenuAction?.(handleStudioTimingMenuAction);
 updateHeaderState();
 window.EpicInspector?.onShowShortcuts?.(() => window.EpicShortcutHelp.show(TAB_TRIGGERS));
+metadataPanel.addEventListener('input', saveSessionState);
+
+let fileDragDepth = 0;
+const isFileDrag = event => Array.from(event.dataTransfer?.types || []).includes('Files');
+function clearFileDropHint() {
+  fileDragDepth = 0;
+  document.body.classList.remove('file-drop-active');
+}
+async function openDroppedPaths(paths) {
+  const failures = [];
+  for (const filePath of [...new Set(paths)]) {
+    try {
+      const existing = fileTabs.find(tab => tab.currentFilePath === filePath);
+      if (existing) {
+        captureActiveFileTab(); applyFileTab(existing); saveSessionState();
+      } else {
+        openResultInTab(await window.EpicInspector.openFilePath(filePath));
+      }
+    } catch (error) { failures.push(`${getDisplayName(filePath)}: ${error.message || error}`); }
+  }
+  if (failures.length) {
+    setStatus(`Some files could not be opened:\n${failures.join('\n')}`);
+    saveSessionState();
+  }
+}
+openDroppedPaths = lockFileOperation(openDroppedPaths);
+window.addEventListener('dragenter', event => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault(); event.stopPropagation();
+  fileDragDepth++;
+  if (canChangeFileTab()) document.body.classList.add('file-drop-active');
+}, true);
+window.addEventListener('dragover', event => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault(); event.stopPropagation();
+  event.dataTransfer.dropEffect = canChangeFileTab() ? 'copy' : 'none';
+}, true);
+window.addEventListener('dragleave', event => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault(); event.stopPropagation();
+  if (--fileDragDepth <= 0) clearFileDropHint();
+}, true);
+window.addEventListener('dragend', clearFileDropHint, true);
+window.addEventListener('drop', event => {
+  if (!isFileDrag(event) && !event.dataTransfer?.files.length) return;
+  event.preventDefault(); event.stopPropagation();
+  clearFileDropHint();
+  if (!canChangeFileTab()) {
+    setStatus('Finish the current operation or close the dialog, then drop the files again.');
+    return;
+  }
+  const paths = Array.from(event.dataTransfer.files, file => window.EpicInspector.getDroppedFilePath(file)).filter(Boolean);
+  if (paths.length) openDroppedPaths(paths);
+  else setStatus('Drop local EPIC, EPICX, TXT, Markdown, WAV, or MP3 files to open them.');
+}, true);

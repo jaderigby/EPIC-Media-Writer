@@ -3,6 +3,7 @@ const { parseEpicText } = require("./lib/epic-parser");
 const path = require("path");
 
 const fs = require("fs/promises");
+const { readOpenFile, SUPPORTED_EXTENSIONS } = require("./lib/open-file.cjs");
 
 let mainWindowRef = null;
 let studioTimingMenuState = {
@@ -986,48 +987,13 @@ async function writeMediaArtworkToOutput({
 ipcMain.handle("open-media", async () => {
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
-    filters: [
-      {
-        name: "EPIC Files",
-        extensions: [
-          "epic", 
-          "epicx",
-          "txt",
-          "md", 
-          "wav", 
-          "mp3"
-        ]
-      }
-    ]
+    filters: [{ name: "EPIC Files", extensions: SUPPORTED_EXTENSIONS }]
   });
-
   if (result.canceled) return null;
-
-  const filePath = result.filePaths[0];
-  const ext = path.extname(filePath).toLowerCase();
-
-  if (ext === ".epic" || ext === ".epicx" || ext === ".txt" || ext === ".md") {
-    const text = await fs.readFile(filePath, "utf8");
-
-    return {
-      kind: "text",
-      filePath,
-      text,
-      metadata: null,
-      epicx: text
-    };
-  }
-
-  const metadata = await readMediaMetadata(filePath);
-  const kind = getMediaKind(filePath);
-
-  return {
-    kind,
-    filePath,
-    metadata,
-    epicx: metadata.epicx || ""
-  };
+  return readOpenFile(result.filePaths[0], readMediaMetadata);
 });
+
+ipcMain.handle("open-file-path", (_event, filePath) => readOpenFile(filePath, readMediaMetadata));
 
 ipcMain.handle("save-media", async (event, payload) => {
   const { filePath, epicx, saveAs } = payload;

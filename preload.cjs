@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("EpicInspector", {
   platform: process.platform,
@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("EpicInspector", {
   },
   saveStudioProject: payload => ipcRenderer.invoke("studio-project:save", payload),
   openMedia: () => ipcRenderer.invoke("open-media"),
+  getDroppedFilePath: file => webUtils.getPathForFile(file),
+  openFilePath: filePath => ipcRenderer.invoke("open-file-path", filePath),
   saveMedia: (payload) => ipcRenderer.invoke("save-media", payload),
   saveMetadata: (payload) => ipcRenderer.invoke("save-metadata", payload),
   parseEpic: (payload) => ipcRenderer.invoke("parse-epic", payload),

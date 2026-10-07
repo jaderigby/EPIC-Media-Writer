@@ -63,7 +63,7 @@ export function create(parent) {
   const events = new EventTarget();
   const keyHandlers = [];
   const ghost = new Compartment();
-  let pendingInput = false, lastInputType = '', flashTimer, ghostText = '';
+  let pendingInput = false, lastInputType = '', flashTimer, ghostText = '', documentVersion = 0;
   // Application callbacks may themselves edit (e.g. header correction). Run after
   // CodeMirror finishes its update, and coalesce synchronous programmatic edits.
   const notifyInput = type => {
@@ -127,10 +127,29 @@ export function create(parent) {
     },
     // File loads must reset history even when the new file has identical text.
     load(text) {
+      documentVersion++;
       clearTimeout(flashTimer);
       view.setState(EditorState.create({ doc: String(text), extensions }));
       if (ghostText) view.dispatch({ effects: ghost.reconfigure(placeholder(ghostText)) });
       view.scrollDOM.scrollTop = 0;
+      notifyInput('insertReplacementText');
+    },
+    capture() {
+      return { state: view.state, scrollTop: view.scrollDOM.scrollTop, scrollLeft: view.scrollDOM.scrollLeft };
+    },
+    restore(snapshot) {
+      const version = ++documentVersion;
+      clearTimeout(flashTimer);
+      view.setState(snapshot.state);
+      view.dispatch({ effects: flashEffect.of(null) });
+      view.requestMeasure({
+        read: () => null,
+        write: () => {
+          if (version !== documentVersion) return;
+          view.scrollDOM.scrollTop = snapshot.scrollTop;
+          view.scrollDOM.scrollLeft = snapshot.scrollLeft;
+        }
+      });
       notifyInput('insertReplacementText');
     },
     get selectionStart() { return view.state.selection.main.from; },
