@@ -3,6 +3,11 @@ const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 
 module.exports = {
+  hooks: {
+    generateAssets: async () => {
+      require('./scripts/build-editor.cjs')();
+    }
+  },
   packagerConfig: {
     asar: true,
     icon: path.resolve(__dirname, "assets", "icons", "icon"),

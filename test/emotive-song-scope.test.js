@@ -7,7 +7,8 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'renderer.js'), 'utf8'
 const context = vm.createContext({});
 vm.runInContext(`
   let currentFilePath = 'song-a.epic';
-  const editor = { value: '' };
+  const editor = { value: '', addEventListener() {} };
+  const document = { addEventListener() {}, removeEventListener() {} };
   function splitInstructionItems(text) { return text.split(',').map(s => s.trim()); }
   ${source.slice(source.indexOf('const EMOTIVE_LAYERS ='), source.lastIndexOf('installEmotiveRecipeStyles();'))}
 `, context);
@@ -35,9 +36,8 @@ assert.deepEqual(recipes(), [['swell'], ['open']], 'Save As retains recipes for 
 console.log('Emotive song isolation tests passed.');
 
 run(`
-  const document = { removeEventListener() {} };
   function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;'); }
-  function replaceEditorTextWithManualUndo(value) { editor.value = value; }
+  function replaceEditorText(value) { editor.value = value; }
   function refreshEditorView() {}
   editor.value = '[Chorus {{swell--strong, arc-lift}}]';
   emotiveSessionRecipes = [['energetic']];

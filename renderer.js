@@ -4,7 +4,7 @@ const openBtn = document.getElementById("openBtn");
 const saveBtn = document.getElementById("saveBtn");
 
 const clearSessionBtn = document.getElementById("clearSessionBtn");
-const editor = document.getElementById("editor");
+const editor = window.EpicEditor.create(document.getElementById("editor"));
 const filePathEl = document.getElementById("filePath");
 const statusEl = document.getElementById("status");
 const metadataPanel = document.getElementById("metadataPanel");
@@ -12,7 +12,6 @@ const metadataHeaderTabs = document.getElementById("metadataHeaderTabs");
 const editMetadataBtn = document.getElementById("editMetadataBtn");
 const addAlbumArtBtn = document.getElementById("addAlbumArtBtn");
 const storeAudioBtn = document.getElementById("storeAudioBtn");
-const editorGhost = document.getElementById("editorGhost");
 const audioLinkInfo = document.getElementById("audioLinkInfo");
 const unlinkAudioBtn = document.getElementById("unlinkAudioBtn");
 const numericOrderingBtn = document.getElementById("numericOrderingBtn");
@@ -58,7 +57,7 @@ function receiveStudioProject(snapshot, { initial = false } = {}) {
   }
   const start = editor.selectionStart, end = editor.selectionEnd, scroll = editor.scrollTop;
   if (result.text !== editor.value) {
-    replaceEditorTextWithManualUndo(result.text);
+    replaceEditorText(result.text);
     editor.setSelectionRange(Math.min(start, result.text.length), Math.min(end, result.text.length));
     editor.scrollTop = scroll;
     scheduleEpicValidation();
@@ -94,7 +93,7 @@ async function saveLinkedStudioProject() {
     }
     // Keep any edits typed while the save was in flight.
     const merged = window.EpicProjectTextMerge.merge(submitted, editor.value, result.project.text);
-    if (merged.ok && merged.text !== editor.value) replaceEditorTextWithManualUndo(merged.text);
+    if (merged.ok && merged.text !== editor.value) replaceEditorText(merged.text);
     sourceEditorText = result.project.text;
     sourceHadContent = !!sourceEditorText.trim();
     if (currentMetadata) currentMetadata.epicx = sourceEditorText;
@@ -130,12 +129,7 @@ let studioTimingPollTimer = null;
 let isStudioTimingSyncInProgress = false;
 let transientStatusText = "";
 let statusObserver = null;
-let manualUndoStack = [];
-let manualRedoStack = [];
-let isApplyingUndo = false;
 let pendingAddedEpicxTimestamps = [];
-
-const MAX_UNDO_SNAPSHOTS = 100;
 
 function getTocGroupKey(sectionIdentity) {
   const match = String(sectionIdentity || "").match(/^\[\s*([^{}\]]+)/);
@@ -162,68 +156,8 @@ function groupSectionTocEntries(entries) {
   return groups;
 }
 
-function pushUndoSnapshot() {
-  manualUndoStack.push(captureEditorSnapshot());
-  manualRedoStack = [];
-
-  if (manualUndoStack.length > MAX_UNDO_SNAPSHOTS) {
-    manualUndoStack.shift();
-  }
-}
-
-function captureEditorSnapshot() {
-  return {
-    value: editor.value,
-    selectionStart: editor.selectionStart,
-    selectionEnd: editor.selectionEnd,
-    scrollTop: editor.scrollTop
-  };
-}
-
-function applyEditorSnapshot(snapshot, inputType = "historyUndo") {
-  const before = captureEditorSnapshot();
-
-  isApplyingUndo = true;
-
-  try {
-    editor.value = snapshot.value;
-    editor.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
-    editor.scrollTop = snapshot.scrollTop;
-
-    editor.dispatchEvent(new InputEvent("input", {
-      bubbles: true,
-      inputType
-    }));
-  } finally {
-    isApplyingUndo = false;
-  }
-
-  return before;
-}
-
 function applyEditorHistoryAction(action) {
-  if (action === "undo") {
-    const snapshot = manualUndoStack.pop();
-
-    if (!snapshot) return false;
-
-    const redoSnapshot = applyEditorSnapshot(snapshot, "historyUndo");
-    manualRedoStack.push(redoSnapshot);
-  } else if (action === "redo") {
-    const snapshot = manualRedoStack.pop();
-
-    if (!snapshot) return false;
-
-    const undoSnapshot = applyEditorSnapshot(snapshot, "historyRedo");
-    manualUndoStack.push(undoSnapshot);
-  } else {
-    return false;
-  }
-
-  scheduleEpicValidation();
-  saveSessionState();
-  updateHeaderState();
-  return true;
+  return action === "undo" ? editor.undo() : action === "redo" ? editor.redo() : false;
 }
 
 const validationStatusEl =
@@ -362,36 +296,11 @@ ${authorKey}: ${authorValue}
 `;
 }
 
-const editorHighlight = document.getElementById("editorHighlight");
-
-function syncEditorHighlight() {
-  if (!editorHighlight) return;
-
-  editorHighlight.innerHTML =
-    renderEpicHighlight(editor.value) + "\n ";
-
-  editorHighlight.scrollTop = editor.scrollTop;
-  editorHighlight.scrollLeft = editor.scrollLeft;
-
-  updateSectionFlashOverlay();
-}
-
 function showGhostHeaderIfAppropriate() {
-  if (!editorGhost) return;
-
-  const shouldShow =
-    editor.value.length === 0 &&
-    document.activeElement === editor;
-
+  const shouldShow = editor.value.length === 0 && editor.hasFocus;
+  if (ghostHeaderVisible === shouldShow) return;
   ghostHeaderVisible = shouldShow;
-
-  if (shouldShow) {
-    editorGhost.textContent = getHeaderStub();
-    editor.classList.add("has-ghost");
-  } else {
-    editorGhost.textContent = "";
-    editor.classList.remove("has-ghost");
-  }
+  editor.setPlaceholder(shouldShow ? getHeaderStub() : "");
 }
 
 function commitGhostHeader() {
@@ -403,8 +312,7 @@ function commitGhostHeader() {
   sourceEditorText = "";
 
   ghostHeaderVisible = false;
-  editorGhost.textContent = "";
-  editor.classList.remove("has-ghost");
+  editor.setPlaceholder("");
 
   const titleStart = stub.indexOf("Untitled");
   const titleEnd = titleStart + "Untitled".length;
@@ -421,24 +329,9 @@ function hasUnsavedChanges() {
   return editor.value !== sourceEditorText;
 }
 
-let highlightSyncFrame = null;
-let sectionFlash = null; // { start, end, startedAt } line range briefly highlighted after a drawer jump
-let sectionFlashTimer = null;
 const SECTION_FLASH_MS = 1400;
 
-function requestEditorHighlightSync() {
-  if (highlightSyncFrame) {
-    cancelAnimationFrame(highlightSyncFrame);
-  }
-
-  highlightSyncFrame = requestAnimationFrame(() => {
-    highlightSyncFrame = null;
-    syncEditorHighlight();
-  });
-}
-
 function refreshEditorView() {
-  requestEditorHighlightSync();
   updateTocDrawerAvailability();
 
   if (tocDrawer?.classList.contains("open")) {
@@ -558,6 +451,30 @@ function moveToNextHeaderValue() {
   return false;
 }
 
+const TAB_TRIGGERS = new Map([
+  ["gen", { text: "[Generation]\nStyles: " }],
+  ["ff", { text: "[{&}]", cursor: 4 }]
+]);
+
+function expandTabTrigger() {
+  const text = editor.value;
+  const cursor = editor.selectionStart;
+  if (cursor !== editor.selectionEnd) return false;
+
+  const lineStart = text.lastIndexOf("\n", cursor - 1) + 1;
+  const match = /^([ \t]*)([a-z]+)$/.exec(text.slice(lineStart, cursor));
+  const trigger = match && TAB_TRIGGERS.get(match[2]);
+  if (!trigger) return false;
+  const replacement = trigger.text;
+  const lineEnd = text.indexOf("\n", cursor);
+  if (text.slice(cursor, lineEnd < 0 ? text.length : lineEnd).trim()) return false;
+
+  const start = lineStart + match[1].length;
+  editor.value = text.slice(0, start) + replacement + text.slice(cursor);
+  editor.setSelectionRange(start + (trigger.cursor ?? replacement.length));
+  return true;
+}
+
 function expandFreeflowSectionTrigger() {
   const text = editor.value;
   const cursor = editor.selectionStart;
@@ -574,8 +491,6 @@ function expandFreeflowSectionTrigger() {
   const cursorTarget = triggerStart + 4;
   const scrollTop = editor.scrollTop;
 
-  pushUndoSnapshot();
-
   editor.value =
     text.slice(0, triggerStart) +
     replacement +
@@ -584,11 +499,6 @@ function expandFreeflowSectionTrigger() {
   editor.focus();
   editor.setSelectionRange(cursorTarget, cursorTarget);
   editor.scrollTop = scrollTop;
-
-  editor.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType: "insertReplacementText"
-  }));
 
   return true;
 }
@@ -615,8 +525,6 @@ function moveOutOfFreeflowSectionOpener() {
 
   const scrollTop = editor.scrollTop;
 
-  pushUndoSnapshot();
-
   editor.value =
     text.slice(0, afterCloser) +
     "\n" +
@@ -626,10 +534,6 @@ function moveOutOfFreeflowSectionOpener() {
   editor.setSelectionRange(afterCloser + 1, afterCloser + 1);
   editor.scrollTop = scrollTop;
 
-  editor.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType: "insertLineBreak"
-  }));
 
   return true;
 }
@@ -638,7 +542,6 @@ function insertFreeflowSectionCloser() {
   const text = editor.value;
   const selectionStart = editor.selectionStart;
   const selectionEnd = editor.selectionEnd;
-  const selectedText = text.slice(selectionStart, selectionEnd);
   const lineStart = text.lastIndexOf("\n", selectionStart - 1) + 1;
   const linePrefix = text.slice(lineStart, selectionStart);
   const needsLeadingNewline =
@@ -647,8 +550,6 @@ function insertFreeflowSectionCloser() {
   const replacement = `${needsLeadingNewline ? "\n" : ""}:::\n`;
   const cursorTarget = selectionStart + replacement.length;
   const scrollTop = editor.scrollTop;
-
-  pushUndoSnapshot();
 
   editor.value =
     text.slice(0, selectionStart) +
@@ -659,12 +560,6 @@ function insertFreeflowSectionCloser() {
   editor.setSelectionRange(cursorTarget, cursorTarget);
   editor.scrollTop = scrollTop;
 
-  editor.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType: selectedText
-      ? "insertReplacementText"
-      : "insertText"
-  }));
 
   return true;
 }
@@ -741,15 +636,10 @@ function replaceHeaderAuthorKey(nextKey) {
   const selectionEnd = editor.selectionEnd;
   const delta = nextKey.length - match[1].length;
 
-  pushUndoSnapshot();
   editor.value = text.slice(0, keyStart) + nextKey + text.slice(keyEnd);
 
   const adjust = position => position > keyEnd ? position + delta : position;
   editor.setSelectionRange(adjust(selectionStart), adjust(selectionEnd));
-  editor.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType: "insertReplacementText"
-  }));
 
   return true;
 }
@@ -1054,7 +944,7 @@ function applyStudioTimingSnapshot(snapshot) {
   const selectionEnd = editor.selectionEnd;
   const scrollTop = editor.scrollTop;
 
-  replaceEditorTextWithManualUndo(nextText);
+  replaceEditorText(nextText);
 
   editor.setSelectionRange(
     Math.min(selectionStart, nextText.length),
@@ -1304,7 +1194,7 @@ function restoreSessionState() {
     currentMetadata = state.currentMetadata || null;
 
     currentFilePath = state.currentFilePath || "";
-    editor.value = state.editorText || "";
+    editor.load(state.editorText || "");
     refreshEditorView();
 
     filePathEl.textContent =
@@ -1351,10 +1241,7 @@ function resetSession() {
   metadataEditMode = false;
   rawMetadataOpen = false;
 
-  manualUndoStack = [];
-  manualRedoStack = [];
-
-  editor.value = "";
+  editor.load("");
   refreshEditorView();
 
   sourceEditorText = "";
@@ -1387,15 +1274,8 @@ function resetSession() {
   showGhostHeaderIfAppropriate();
 }
 
-function replaceEditorTextWithManualUndo(nextText) {
-  pushUndoSnapshot();
-
+function replaceEditorText(nextText) {
   editor.value = nextText;
-
-  editor.dispatchEvent(new InputEvent("input", {
-    bubbles: true,
-    inputType: "insertReplacementText"
-  }));
 }
 
 function scheduleEpicValidation() {
@@ -1584,13 +1464,13 @@ numericOrderingBtn?.addEventListener("click", async () => {
     const selectionStart = editor.selectionStart;
     const selectionEnd = editor.selectionEnd;
     const scrollTop = editor.scrollTop;
-    const hadFocus = document.activeElement === editor;
+    const hadFocus = editor.hasFocus;
 
     if (!hadFocus) {
       editor.focus({ preventScroll: true });
     }
 
-    replaceEditorTextWithManualUndo(normalized);
+    replaceEditorText(normalized);
 
     editor.setSelectionRange(
       Math.min(selectionStart, normalized.length),
@@ -2080,30 +1960,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function highlightEntryNumbers(text) {
-  return text.replace(
-    /(^|\n\n)(\d+)(\n\d{2}:\d{2}(?::\d{2})?\.\d{3})/g,
-    (_, prefix, number, timestamp) =>
-      `${prefix}<span class="epic-entry-number">${number}</span>${timestamp}`
-  );
-}
-
-function highlightTimestamps(text) {
-  return text.replace(
-    /\b(\d{2}:\d{2}(?::\d{2})?\.\d{3})(\s*-->\s*(\d{2}:\d{2}(?::\d{2})?\.\d{3}))?/g,
-    (match, start, rangePart = "") => {
-      if (rangePart) {
-        return `<span class="epic-time-range"><span class="epic-time">${start}</span>${rangePart.replace(
-          /(\d{2}:\d{2}(?::\d{2})?\.\d{3})/,
-          '<span class="epic-time">$1</span>'
-        )}</span>`;
-      }
-
-      return `<span class="epic-time">${start}</span>`;
-    }
-  );
-}
-
 function getSectionTocEntries(source) {
   const lines = String(source || "").split("\n");
   const entries = [];
@@ -2204,11 +2060,7 @@ function renderSectionToc() {
       // Move the caret to the section without stealing focus from the drawer.
       editor.setSelectionRange(offset, offset);
 
-      const lineHeight =
-        parseFloat(getComputedStyle(editor).lineHeight) || 20;
-
-      editor.scrollTop =
-        Math.max(0, lineIndex * lineHeight - 40);
+      editor.scrollToLine(lineIndex);
 
       flashSection(lineIndex);
       refreshEditorView();
@@ -2245,50 +2097,6 @@ function formatTocLabel(sectionIdentity) {
   );
 }
 
-function highlightInstructionBlocks(text) {
-  return text.replace(
-    /\{\{&\}([^{}]*?)\}\}|\{\{([^{}]*?)\}\}/g,
-    (match, freeformInner) => {
-      const cssClass = freeformInner !== undefined
-        ? "epic-freeform-notation"
-        : "epic-instruction";
-
-      return `<span class="${cssClass}">${match}</span>`;
-    }
-  );
-}
-
-function highlightMarkdownInline(text) {
-  return text
-    .replace(
-      /`([^`]+)`/g,
-      '<span class="md-marker">`</span><span class="md-inline-code">$1</span><span class="md-marker">`</span>'
-    )
-    .replace(
-      /(!?)\[([^\]]*)\]\(([^)]+)\)/g,
-      (_, bang, label, target) => {
-        if (bang) {
-          return `<span class="md-image-ref"><span class="md-marker">![</span><span class="md-image-label">${label}</span><span class="md-marker">](</span><span class="md-image-target">${target}</span><span class="md-marker">)</span></span>`;
-        }
-
-        return `<span class="md-link-ref"><span class="md-marker">[</span><span class="md-link-label">${label}</span><span class="md-marker">](</span><span class="md-link-target">${target}</span><span class="md-marker">)</span></span>`;
-      }
-    )
-    .replace(
-      /\*\*([^*]+)\*\*/g,
-      '<span class="md-marker">**</span><span class="md-bold">$1</span><span class="md-marker">**</span>'
-    )
-    .replace(
-      /(?<!\*)\*([^*\n]+)\*(?!\*)/g,
-      '<span class="md-marker">*</span><span class="md-italic">$1</span><span class="md-marker">*</span>'
-    );
-}
-
-function isMarkdownListLine(rawLine) {
-  return /^\s*(-|\*|\+)\s+\S/.test(rawLine) ||
-    /^\s*\d+\.\s+\S/.test(rawLine);
-}
-
 function isEpicxEntryIndexLine(rawLine) {
   return /^\s*\d+\s*$/.test(rawLine);
 }
@@ -2299,175 +2107,6 @@ function isEpicxTimeLine(rawLine) {
 
 function isFreeflowSectionLine(rawLine) {
   return /^\s*\[\s*\{&\}[\s\S]*\]\s*$/.test(rawLine);
-}
-
-function renderEpicHighlight(value) {
-  const lines = String(value).split("\n");
-
-  let fenceCount = 0;
-  let inHeader = false;
-  let inEpicxEntry = false;
-  let inFreeflowSection = false;
-  let activeBlockClass = "";
-
-  const rendered = lines.map((rawLine, index) => {
-    const escaped = escapeHtml(rawLine);
-    const previousLine = lines[index - 1] || "";
-
-    const isEntryNumberLine =
-      isEpicxEntryIndexLine(rawLine) &&
-      isEpicxTimeLine(lines[index + 1] || "") &&
-      (
-        index === 0 ||
-        previousLine.trim().length === 0
-      );
-
-    let highlighted =
-      highlightTimestamps(
-        highlightInstructionBlocks(
-          highlightMarkdownInline(escaped)
-        )
-      );
-
-    if (isEntryNumberLine) {
-      highlighted =
-        `<span class="epic-entry-number">${highlighted}</span>`;
-    }
-    const trimmed = rawLine.trim();
-
-    const startsMultilineBlock =
-      trimmed.startsWith("{{") &&
-      !trimmed.includes("}}");
-
-    const endsMultilineBlock =
-      activeBlockClass &&
-      trimmed.endsWith("}}");
-
-    const startsFreeflowSection =
-      !inHeader &&
-      isFreeflowSectionLine(rawLine);
-
-    const endsFreeflowSection =
-      inFreeflowSection &&
-      trimmed === ":::";
-
-    const isFreeflowSectionContent =
-      inFreeflowSection ||
-      startsFreeflowSection;
-
-    let lineHtml = highlighted;
-
-    if (isFreeflowSectionContent) {
-      const freeflowClass = startsFreeflowSection
-        ? "epic-freeflow-section epic-freeflow-opener"
-        : endsFreeflowSection
-          ? "epic-freeflow-section epic-freeflow-closer"
-          : "epic-freeflow-section";
-
-      lineHtml = `<span class="${freeflowClass}">${highlighted}</span>`;
-    } else if (trimmed === "---") {
-      fenceCount += 1;
-
-      inHeader = fenceCount === 1;
-
-      lineHtml = `<span class="epic-header">${highlighted}</span>`;
-
-      if (fenceCount === 2) {
-        inHeader = false;
-      }
-    } else if (inHeader) {
-      lineHtml = `<span class="epic-header">${highlighted}</span>`;
-    } else if (/^\s*\[[^\]]+\]\s*$/.test(rawLine)) {
-      lineHtml = `<span class="epic-section">${highlighted}</span>`;
-    }
-
-    if (startsFreeflowSection) {
-      inFreeflowSection = true;
-    }
-
-    if (startsMultilineBlock) {
-      activeBlockClass = trimmed.startsWith("{{&}")
-        ? "epic-freeform-notation"
-        : "epic-instruction";
-    }
-
-    if (activeBlockClass && !isFreeflowSectionContent) {
-      lineHtml =
-        `<span class="${activeBlockClass}">${highlighted}</span>`;
-    }
-
-    if (endsMultilineBlock) {
-      activeBlockClass = "";
-    }
-
-    if (endsFreeflowSection) {
-      inFreeflowSection = false;
-    }
-
-    const nextLine = lines[index + 1] || "";
-    const startsEpicxEntry =
-      isEpicxEntryIndexLine(rawLine) &&
-      isEpicxTimeLine(nextLine);
-
-    const isBlank =
-      trimmed.length === 0;
-
-    let output = "";
-
-    if (!inHeader && isMarkdownListLine(rawLine)) {
-      lineHtml = `<span class="md-list-line">${lineHtml}</span>`;
-    }
-
-    if (sectionFlash) {
-      // Empty, zero-size markers: they only let us measure where the section
-      // starts and ends. They add no text and do not change layout.
-      if (index === sectionFlash.start) {
-        lineHtml = `<span data-flash-marker="start"></span>${lineHtml}`;
-      }
-      if (index === sectionFlash.end) {
-        lineHtml = `${lineHtml}<span data-flash-marker="end"></span>`;
-      }
-    }
-
-    if (startsEpicxEntry) {
-      if (inEpicxEntry) {
-        output += `</span>`;
-      }
-
-      output += `<span class="epicx-entry">`;
-      inEpicxEntry = true;
-    }
-
-    if (startsFreeflowSection) {
-      output += `<span class="epic-freeflow-block">`;
-    }
-
-    if (inEpicxEntry && isBlank) {
-      output += `${lineHtml}</span>`;
-      inEpicxEntry = false;
-      return output;
-    }
-
-    output += lineHtml;
-
-    if (endsFreeflowSection) {
-      output += `</span>`;
-    }
-
-    return output;
-  }).join("\n");
-
-  let output = rendered;
-
-  if (inEpicxEntry) {
-    output += `</span>`;
-  }
-
-  if (inFreeflowSection) {
-    output += `</span>`;
-  }
-
-  return output;
 }
 
 function getCurrentAudioPath() {
@@ -2863,13 +2502,19 @@ editor.addEventListener("keydown", (event) => {
     return;
   }
 
+  if ((event.key === "Enter" || event.key === "Tab") &&
+      !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey &&
+      moveOutOfFreeflowSectionOpener()) {
+    event.preventDefault();
+    return;
+  }
+
   if (event.key === "Tab") {
-    if (expandFreeflowSectionTrigger()) {
+    if (!event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && expandTabTrigger()) {
       event.preventDefault();
       return;
     }
-
-    if (moveOutOfFreeflowSectionOpener()) {
+    if (expandFreeflowSectionTrigger()) {
       event.preventDefault();
       return;
     }
@@ -2888,8 +2533,6 @@ openBtn.addEventListener("click", async () => {
 
     if (!result) return;
 
-    manualUndoStack = [];
-    manualRedoStack = [];
 
     resetSession();
     switchEmotiveRecipeSong(result.filePath || "");
@@ -2899,7 +2542,7 @@ openBtn.addEventListener("click", async () => {
     }
 
     if (result.kind === "text") {
-      editor.value = result.text || "";
+      editor.load(result.text || "");
       refreshEditorView();
 
       sourceEditorText = editor.value;
@@ -2927,7 +2570,7 @@ openBtn.addEventListener("click", async () => {
       return;
     }
 
-    editor.value = result.epicx || "";
+    editor.load(result.epicx || "");
     refreshEditorView();
     
     sourceEditorText = editor.value;
@@ -2997,6 +2640,7 @@ function isTypingTarget(node) {
 // True when a single-key hotkey should not fire: modifiers held, key repeat,
 // the person is typing, or a dialog is open.
 function shouldIgnoreHotkey(event) {
+  if (document.querySelector('#shortcutHelp[open]')) return true;
   if (event.ctrlKey || event.metaKey || event.altKey) return true;
   if (event.repeat || event.defaultPrevented) return true;
   if (isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return true;
@@ -3090,7 +2734,7 @@ storeAudioBtn?.addEventListener("click", async () => {
       currentMetadata = result.metadata;
       metadataEditMode = false;
 
-      editor.value = result.epicx || "";
+      editor.load(result.epicx || "");
       refreshEditorView();
 
       sourceEditorText = editor.value;
@@ -3307,114 +2951,13 @@ addAlbumArtBtn?.addEventListener("click", () => {
 // main.js calls this when one of them is chosen.
 window.epicMenuSave = (options = {}) => performSave({ saveAs: Boolean(options.saveAs) });
 
-editor.addEventListener("input", requestEditorHighlightSync);
-editor.addEventListener("keyup", requestEditorHighlightSync);
-editor.addEventListener("mouseup", requestEditorHighlightSync);
-editor.addEventListener("click", requestEditorHighlightSync);
 editor.addEventListener("click", maybeShowAuthorKeyPicker);
-editor.addEventListener("select", requestEditorHighlightSync);
-
-editor.addEventListener("scroll", requestEditorHighlightSync);
-
-editor.addEventListener("beforeinput", (event) => {
-  if (isApplyingUndo) return;
-
-  if (event.inputType === "historyUndo") {
-    if (applyEditorHistoryAction("undo")) {
-      event.preventDefault();
-    }
-    return;
+editor.addEventListener("paste", (event) => {
+  const text = event.clipboardData?.getData("text/plain");
+  if (text && editor.selectionStart === editor.selectionEnd) {
+    rememberAddedEpicxTimestamps(editor.value, editor.selectionStart, text);
   }
-
-  if (event.inputType === "historyRedo") {
-    if (applyEditorHistoryAction("redo")) {
-      event.preventDefault();
-    }
-    return;
-  }
-
-  const scrollTop = editor.scrollTop;
-
-  if (
-    event.inputType === "insertFromPaste" &&
-    event.data &&
-    editor.selectionStart === editor.selectionEnd
-  ) {
-    rememberAddedEpicxTimestamps(editor.value, editor.selectionStart, event.data);
-  }
-
-  pushUndoSnapshot();
-
-  requestAnimationFrame(() => {
-    editor.scrollTop = scrollTop;
-  });
 });
-
-/* ==========================================================================
-   Section flash: brief background highlight after jumping to a section
-   ========================================================================== */
-
-function installSectionFlashStyles() {
-  const css = `
-.epic-section-flash-band {
-  position: absolute; left: 0; right: 0; pointer-events: none;
-  background-color: rgba(124, 156, 255, 0);
-  animation: epic-section-flash-fade ${SECTION_FLASH_MS}ms ease-out both;
-}
-@keyframes epic-section-flash-fade {
-  0%   { background-color: rgba(124, 156, 255, .24); }
-  100% { background-color: rgba(124, 156, 255, 0); }
-}
-`;
-  try {
-    if ("adoptedStyleSheets" in document && typeof CSSStyleSheet !== "undefined") {
-      const sheet = new CSSStyleSheet();
-      sheet.replaceSync(css);
-      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-      return;
-    }
-  } catch (_) { /* fall through to <style> */ }
-  const style = document.createElement("style");
-  style.textContent = css;
-  document.head.appendChild(style);
-}
-
-// Draws one solid band behind the flashed section. The band is absolutely
-// positioned inside the highlight layer (so it scrolls with the text) and takes
-// no space in the text flow, so nothing moves when it appears or disappears.
-function updateSectionFlashOverlay() {
-  if (!editorHighlight || !sectionFlash) return;
-
-  const startMarker = editorHighlight.querySelector('[data-flash-marker="start"]');
-  const endMarker = editorHighlight.querySelector('[data-flash-marker="end"]');
-  if (!startMarker || !endMarker) return;
-
-  if (getComputedStyle(editorHighlight).position === "static") {
-    editorHighlight.style.position = "relative";
-  }
-
-  const lineHeight = parseFloat(getComputedStyle(editorHighlight).lineHeight) || 20;
-  const layerRect = editorHighlight.getBoundingClientRect();
-  const startRect = startMarker.getBoundingClientRect();
-  const endRect = endMarker.getBoundingClientRect();
-
-  // Marker rects cover the font box; expand to whole line boxes, then convert
-  // to the layer's scrolled content coordinates.
-  const origin = layerRect.top + editorHighlight.clientTop - editorHighlight.scrollTop;
-  const top = startRect.top + startRect.height / 2 - lineHeight / 2 - origin;
-  const bottom = endRect.top + endRect.height / 2 + lineHeight / 2 - origin;
-  if (!(bottom > top)) return;
-
-  const elapsed = Math.max(0, Math.min(SECTION_FLASH_MS, Date.now() - sectionFlash.startedAt));
-
-  const band = document.createElement("div");
-  band.className = "epic-section-flash-band";
-  band.style.top = `${top}px`;
-  band.style.height = `${bottom - top}px`;
-  // Negative delay keeps the fade continuous when the layer re-renders mid-flash.
-  band.style.animationDelay = `-${elapsed}ms`;
-  editorHighlight.appendChild(band);
-}
 
 // In .epicx, an entry's number and timestamp sit on the two lines above its
 // [Section] label. Returns the first line of that entry (or the label line).
@@ -3445,17 +2988,8 @@ function flashSection(lineIndex) {
 
   while (end > start && lines[end].trim() === "") end -= 1;
 
-  clearTimeout(sectionFlashTimer);
-  sectionFlash = { start, end, startedAt: Date.now() };
-  requestEditorHighlightSync();
-
-  sectionFlashTimer = setTimeout(() => {
-    sectionFlash = null;
-    requestEditorHighlightSync();
-  }, SECTION_FLASH_MS + 100);
+  editor.flashLines(start, end, SECTION_FLASH_MS);
 }
-
-installSectionFlashStyles();
 
 /* ==========================================================================
    Emotive recipes (section drawer "more" popup)
@@ -3872,7 +3406,7 @@ function removeEmotiveRecipeFromSection(lineIndex) {
   });
 
   const scrollTop = editor.scrollTop;
-  replaceEditorTextWithManualUndo(lines.join("\n"));
+  replaceEditorText(lines.join("\n"));
   editor.scrollTop = scrollTop;
 
   refreshEditorView();
@@ -3909,7 +3443,7 @@ function applyEmotiveRecipeToSection(lineIndex, recipeItems) {
   });
 
   const scrollTop = editor.scrollTop;
-  replaceEditorTextWithManualUndo(lines.join("\n"));
+  replaceEditorText(lines.join("\n"));
 
   const offset = getOffsetForLine(editor.value, lineIndex);
   editor.focus();
@@ -4146,20 +3680,7 @@ function getSectionLineIndexForEditorLine(lineIndex) {
 }
 
 function getEditorLineIndexAtClientY(clientY) {
-  const rect = editor.getBoundingClientRect();
-  if (clientY < rect.top || clientY > rect.bottom) return null;
-
-  const style = getComputedStyle(editor);
-  const lineHeight = parseFloat(style.lineHeight) || 20;
-  const paddingTop = parseFloat(style.paddingTop) || 0;
-  const contentY = clientY - rect.top - paddingTop + editor.scrollTop;
-
-  if (contentY < 0) return null;
-
-  const lineIndex = Math.floor(contentY / lineHeight);
-  const lineCount = editor.value.split("\n").length;
-
-  return lineIndex >= 0 && lineIndex < lineCount ? lineIndex : null;
+  return editor.lineIndexAtClientY(clientY);
 }
 
 editor.addEventListener("pointermove", (event) => {
@@ -4171,6 +3692,7 @@ editor.addEventListener("pointerleave", () => {
 });
 
 function handleEmotiveShortcut(event) {
+  if (document.querySelector('#shortcutHelp[open]')) return;
   if (
     event.defaultPrevented ||
     event.shiftKey ||
@@ -4184,7 +3706,7 @@ function handleEmotiveShortcut(event) {
 
   let lineIndex = null;
 
-  if (document.activeElement === editor) {
+  if (editor.hasFocus) {
     lineIndex = getSectionLineIndexForEditorLine(getEditorCaretLineIndex());
   } else if (Number.isInteger(hoveredEditorLineIndex)) {
     lineIndex = getSectionLineIndexForEditorLine(hoveredEditorLineIndex);
@@ -4242,6 +3764,7 @@ function closeEmotiveRecipeDialog() {
 }
 
 function handleEmotiveDialogKeydown(event) {
+  if (document.querySelector('#shortcutHelp[open]')) return;
   if (event.key === "Enter" && event.target?.classList?.contains("emo-text-input")) {
     event.preventDefault();
     event.stopPropagation();
@@ -4432,7 +3955,7 @@ function handleEmotiveDialogClick(event) {
 
   if (action === "cancel") {
     if (editor.value !== state.originalText) {
-      replaceEditorTextWithManualUndo(state.originalText);
+      replaceEditorText(state.originalText);
       refreshEditorView();
     }
     emotiveSessionRecipes.splice(0, emotiveSessionRecipes.length, ...state.originalRecipes);
@@ -4462,11 +3985,8 @@ restoreSessionState();
 window.EpicInspector?.onEditorHistoryAction?.((action) => {
   editor.focus();
 
-  if (applyEditorHistoryAction(action)) return;
-
-  if (action === "undo" || action === "redo") {
-    document.execCommand(action);
-  }
+  applyEditorHistoryAction(action);
 });
 window.EpicInspector?.onStudioTimingMenuAction?.(handleStudioTimingMenuAction);
 updateHeaderState();
+window.EpicInspector?.onShowShortcuts?.(() => window.EpicShortcutHelp.show(TAB_TRIGGERS));

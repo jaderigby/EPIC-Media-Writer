@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("EpicInspector", {
+  platform: process.platform,
+  onShowShortcuts: handler => {
+    if (typeof handler !== "function") return;
+    ipcRenderer.removeAllListeners("shortcuts:show");
+    ipcRenderer.on("shortcuts:show", () => handler());
+  },
   saveStudioProject: payload => ipcRenderer.invoke("studio-project:save", payload),
   openMedia: () => ipcRenderer.invoke("open-media"),
   saveMedia: (payload) => ipcRenderer.invoke("save-media", payload),
