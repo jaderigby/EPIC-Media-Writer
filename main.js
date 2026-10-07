@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, screen } = require("electron");
 const { parseEpicText } = require("./lib/epic-parser");
 const path = require("path");
 
@@ -812,9 +812,24 @@ ipcMain.handle("save-text", async (_event, payload) => {
 });
 
 function createWindow() {
+  const windowStatePath = path.join(app.getPath('userData'), 'window-state.json');
+  const stateFs = require('fs');
+  let savedState;
+  try {
+    const value = JSON.parse(stateFs.readFileSync(windowStatePath, 'utf8'));
+    if (['x', 'y', 'width', 'height'].every(key => Number.isFinite(value[key])) &&
+        value.width > 0 && value.height > 0) savedState = value;
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('Could not restore window state:', error.message);
+  }
+  const area = (savedState ? screen.getDisplayMatching(savedState) : screen.getPrimaryDisplay()).workArea;
+  const width = Math.min(Math.round(savedState?.width || area.width * 0.85), area.width);
+  const height = Math.min(Math.round(savedState?.height || area.height * 0.85), area.height);
+  const x = Math.max(area.x, Math.min(Math.round(savedState?.x ?? area.x + (area.width - width) / 2), area.x + area.width - width));
+  const y = Math.max(area.y, Math.min(Math.round(savedState?.y ?? area.y + (area.height - height) / 2), area.y + area.height - height));
   const win = new BrowserWindow({
-    width: 1000,
-    height: 760,
+    width, height, x, y,
+    show: false,
     title: "EPIC Media Writer",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -825,6 +840,21 @@ function createWindow() {
   });
 
   mainWindowRef = win;
+
+  win.once('ready-to-show', () => {
+    if (savedState?.maximized) win.maximize();
+    win.show();
+  });
+  win.on('close', () => {
+    try {
+      stateFs.mkdirSync(path.dirname(windowStatePath), { recursive: true });
+      stateFs.writeFileSync(windowStatePath, JSON.stringify({
+        ...win.getNormalBounds(), maximized: win.isMaximized()
+      }));
+    } catch (error) {
+      console.warn('Could not save window state:', error.message);
+    }
+  });
 
   win.on("closed", () => {
     if (mainWindowRef === win) {
