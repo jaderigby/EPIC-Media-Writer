@@ -1,5 +1,7 @@
 #fileTabBar { flex: 0 0 auto; display: flex; align-items: stretch; gap: 6px; padding: 4px 16px 0; background: #0a1520; border-bottom: 1px solid #4f68b3; min-width: 0; }
 #fileTabList { display: flex; gap: 0; overflow-x: auto; min-width: 0; }
+#fileTabList:has(> .file-tab:only-child) { visibility: hidden; max-width: 0; margin-right: -6px; pointer-events: none; }
+#fileTabBar:has(> #newFileTab[hidden]) #fileTabList:has(> .file-tab:only-child) { display: none; }
 .file-tab { display: flex; align-items: stretch; flex: 0 0 auto; border: 1px solid #5975cb; border-radius: 0; border-bottom: none; background: transparent; overflow: hidden; }
 .file-tab:first-child { border-top-left-radius: 5px; }
 .file-tab:last-child { border-top-right-radius: 5px; }
@@ -15,7 +17,9 @@
 #fileTabBar .file-tab:last-child .file-tab-close { border-top-right-radius: 4px; }
 #fileTabBar button:hover { background: #ffffff12; color: white; }
 #fileTabBar button:focus-visible { outline: 2px solid #7c9cff; outline-offset: -2px; }
-#newFileTab { flex: 0 0 auto; min-width: 30px; }
+#newFileTab { position: relative; flex: 0 0 auto; min-width: 30px; }
+#newFileTab::before { content: '+'; visibility: hidden; }
+#newFileTab .new-file-symbol { position: absolute; left: 50%; top: calc(50% - 2px); transform: translate(-50%, -50%); font-size: 20px; line-height: 1; }
 
 body.file-drop-active::after {
   content: "Drop files to open in tabs"; position: fixed; inset: 12px; z-index: 20000;

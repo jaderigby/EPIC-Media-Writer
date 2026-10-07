@@ -29,6 +29,43 @@ const path = require('node:path');
       await page.keyboard.type(value);
     };
     const originalA = '[Verse]\n' + Array.from({ length: 100 }, (_, i) => `Lyric ${i}`).join('\n');
+    if (process.env.EPIC_TAB_ROW_CHECK) {
+      const bottom = () => page.locator('#fileTabBar').evaluate(el => el.getBoundingClientRect().bottom);
+      const emptyBottom = await bottom();
+      assert.equal(await page.locator('#newFileTab').isVisible(), false);
+      await open('/test/Single.epic', '[Verse]\nSingle');
+      const visibleBottom = await bottom();
+      assert.ok(visibleBottom > emptyBottom, 'Empty row collapses when neither tabs nor plus are visible');
+      assert.equal(await page.locator('#newFileTab').isVisible(), true);
+      await page.locator('#newFileTab').click();
+      assert.equal(await page.locator('.file-tab-select').first().isVisible(), true);
+      assert.equal(await bottom(), visibleBottom, 'Visible tabs preserve plus-only row height');
+      await page.locator('.file-tab.is-active .file-tab-close').click();
+      assert.equal(await bottom(), visibleBottom, 'Returning to plus-only preserves tab row height');
+      assert.equal(await page.locator('.file-tab-select').isVisible(), false);
+      assert.deepEqual(errors, []);
+      console.log('Tab row stays fixed between plus-only and multiple tabs, and collapses when neither is visible.');
+      return;
+    }
+    if (process.env.EPIC_CLOSE_CHECK) {
+      await open('/test/Linked.epicx', '[Verse]\nLinked');
+      await page.evaluate(() => { studioTimingLink = { session: 'test' }; updateHeaderState(); saveSessionState(); });
+      await page.locator('.file-tab.is-active .file-tab-close').click();
+      await page.waitForFunction(() => !currentFilePath && !studioTimingLink);
+      await page.locator('#newFileTab').click();
+      await page.locator('.cm-content').click();
+      await page.keyboard.type('Still editable');
+      assert.equal(await text(), 'Still editable');
+      await open('/test/Reopened.epic', '[Verse]\nReopened');
+      await page.reload();
+      await page.waitForSelector('.cm-content');
+      await page.locator('.file-tab.is-active .file-tab-close').click();
+      await page.locator('#studioTimingLinkButton').click();
+      await open('/test/Again.epic', '[Verse]\nAgain');
+      assert.deepEqual(errors, []);
+      console.log('Close-last-linked-tab, editing, reopening, and reload passed.');
+      return;
+    }
     await open('/test/Alpha.epic', originalA);
     assert.equal(await page.locator('.file-tab').count(), 1, 'First file replaces pristine initial tab');
     const headerLayout = () => page.evaluate(() => {

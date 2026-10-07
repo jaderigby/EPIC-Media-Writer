@@ -804,6 +804,9 @@ function updateStudioTimingMenuState() {
     renderStatus();
   }
 
+  const hasStudioLinkedTab = fileTabs.some(tab =>
+    Boolean(tab.id === activeFileTabId ? studioTimingLink : tab.studioTimingLink));
+  document.getElementById('studioTimingLinkButton').hidden = !hasStudioLinkedTab;
   renderFileTabs();
   window.EpicInspector?.updateStudioTimingMenuState?.({
     available: isAvailable,
