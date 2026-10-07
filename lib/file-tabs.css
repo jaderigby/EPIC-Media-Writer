@@ -1,10 +1,18 @@
-#fileTabBar { flex: 0 0 auto; display: flex; align-items: stretch; gap: 6px; padding: 5px 16px; background: #0a1520; border-bottom: 1px solid #314a62; min-width: 0; }
-#fileTabList { display: flex; gap: 5px; overflow-x: auto; min-width: 0; }
-.file-tab { display: flex; align-items: stretch; flex: 0 0 auto; border: 1px solid #314a62; border-radius: 5px; background: #112234; }
-.file-tab.is-active { border-color: #7c9cff; background: #223550; }
+#fileTabBar { flex: 0 0 auto; display: flex; align-items: stretch; gap: 6px; padding: 4px 16px 0; background: #0a1520; border-bottom: 1px solid #4f68b3; min-width: 0; }
+#fileTabList { display: flex; gap: 0; overflow-x: auto; min-width: 0; }
+.file-tab { display: flex; align-items: stretch; flex: 0 0 auto; border: 1px solid #5975cb; border-radius: 0; border-bottom: none; background: transparent; overflow: hidden; }
+.file-tab:first-child { border-top-left-radius: 5px; }
+.file-tab:last-child { border-top-right-radius: 5px; }
+.file-tab + .file-tab { border-left: none; }
+.file-tab.is-studio-linked::before { content: ''; flex: 0 0 14px; background: linear-gradient(to right, #2f437e, transparent); }
+.file-tab.is-studio-linked.is-active::before { background: linear-gradient(to right, #4f6ec8, transparent); }
+.file-tab.is-active { background-color: #283e5e; }
 #fileTabBar button { background: transparent; border: 0; color: #dce5f6; font: inherit; font-size: 13px; }
-#fileTabBar .file-tab-select { max-width: 240px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 7px 9px; text-align: left; }
-#fileTabBar .file-tab-close { padding: 4px 8px; color: #a1add1; }
+#fileTabBar .file-tab-select { max-width: 240px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 7px 4px 7px 17px; text-align: left; border-radius: 0; }
+#fileTabBar .file-tab.is-studio-linked .file-tab-select { padding: 7px 4px 7px 5px; }
+#fileTabBar .file-tab-close { padding: 4px 8px; color: #a1add1; border-radius: 0; }
+#fileTabBar .file-tab:first-child .file-tab-select { border-top-left-radius: 4px; }
+#fileTabBar .file-tab:last-child .file-tab-close { border-top-right-radius: 4px; }
 #fileTabBar button:hover { background: #ffffff12; color: white; }
 #fileTabBar button:focus-visible { outline: 2px solid #7c9cff; outline-offset: -2px; }
 #newFileTab { flex: 0 0 auto; min-width: 30px; }

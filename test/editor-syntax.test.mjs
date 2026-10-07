@@ -22,3 +22,17 @@ for (const [before, after] of [['abc', 'axc'], ['', 'hello'], ['hello', ''], ['ð
   assert.equal(change ? EditorState.create({ doc: before }).update({ changes: change }).state.doc.toString() : before, after);
 }
 console.log('EPIC syntax ranges and document edits passed.');
+
+const notesSource = '[{&}Verse]\nRegular\n:::\n[{&}]\nNotes\n:::\n[Chorus]\n[{&}Other]\nLast line';
+const notesStart = notesSource.indexOf('[{&}]');
+const notesTokens = epicSyntax(notesSource);
+for (const line of notesTokens.lines) {
+  assert.equal(line.className.includes('cm-epic-freeflow-notes'), line.from >= notesStart,
+    'Only unlabeled Freeflow Notes receive notes styling, continuing through EOF');
+  if (line.from > notesStart) {
+    assert.ok(!line.className.includes('cm-epic-freeflow-opener'));
+    assert.ok(!line.className.includes('epic-freeflow-closer'));
+  }
+}
+assert.ok(notesTokens.lines.some(line => line.from === notesSource.lastIndexOf('Last line') && line.className.includes('cm-epic-freeflow-notes')));
+console.log('Freeflow Notes scope and EOF termination passed.');

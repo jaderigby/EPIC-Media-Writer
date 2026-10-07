@@ -31,6 +31,30 @@ const path = require('node:path');
     const originalA = '[Verse]\n' + Array.from({ length: 100 }, (_, i) => `Lyric ${i}`).join('\n');
     await open('/test/Alpha.epic', originalA);
     assert.equal(await page.locator('.file-tab').count(), 1, 'First file replaces pristine initial tab');
+    const headerLayout = () => page.evaluate(() => {
+      const button = document.querySelector('#clearSessionBtn').getBoundingClientRect();
+      const icon = document.querySelector('#clearSessionBtn .icon').getBoundingClientRect();
+      return {
+        tabTop: document.querySelector('#fileTabBar').getBoundingClientRect().top,
+        iconOffsetX: icon.x + icon.width / 2 - button.x - button.width / 2,
+        iconOffsetY: icon.y + icon.height / 2 - button.y - button.height / 2,
+      };
+    });
+    const savedLayout = await headerLayout();
+    assert.equal(savedLayout.iconOffsetX, 0, 'Close icon is horizontally centered');
+    assert.equal(savedLayout.iconOffsetY, 0, 'Close icon is vertically centered');
+    await page.locator('#newFileTab').click();
+    assert.equal((await headerLayout()).tabTop, savedLayout.tabTop, 'Untitled tab preserves header height');
+    await page.locator('.file-tab.is-active .file-tab-close').click();
+    if (process.env.EPIC_HEADER_CHECK) {
+      console.log(await page.evaluate(() => Object.fromEntries(['header', '#openBtn', '#sessionInfo', '#fileTabBar'].map(selector => {
+        const el = document.querySelector(selector), css = getComputedStyle(el), rect = el.getBoundingClientRect();
+        return [selector, { top: rect.top, height: rect.height, padding: css.padding, fontSize: css.fontSize }];
+      }))));
+      await page.screenshot({ path: path.join(userData, 'header.png') });
+      console.log(`Header alignment and tab stability passed. Screenshot: ${path.join(userData, 'header.png')}`);
+      return;
+    }
     await typeAtEnd(' A edit');
     await page.evaluate(() => { emotiveSessionRecipes.push(['open']); editor.setSelectionRange(10); });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));

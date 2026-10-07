@@ -804,6 +804,7 @@ function updateStudioTimingMenuState() {
     renderStatus();
   }
 
+  renderFileTabs();
   window.EpicInspector?.updateStudioTimingMenuState?.({
     available: isAvailable,
     linked: Boolean(studioTimingLink),
@@ -1817,6 +1818,11 @@ function renderMetadataEditForm(metadata) {
 }
 
 clearSessionBtn?.addEventListener("click", () => closeFileTab(activeFileTabId));
+document.getElementById('studioTimingLinkButton').addEventListener('click', () => {
+  const linkedTab = fileTabs.find(tab => tab.id === activeFileTabId && studioTimingLink)
+    || fileTabs.find(tab => tab.id !== activeFileTabId && tab.studioTimingLink);
+  if (linkedTab) activateFileTab(linkedTab.id);
+});
 
 editMetadataBtn?.addEventListener("click", () => {
   if (!currentMetadata) return;
