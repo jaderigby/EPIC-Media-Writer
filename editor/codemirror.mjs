@@ -1,7 +1,30 @@
 import { EditorState, StateEffect, StateField, Compartment, Prec, Transaction } from '@codemirror/state';
-import { EditorView, Decoration, keymap, placeholder } from '@codemirror/view';
+import { EditorView, Decoration, ViewPlugin, keymap, placeholder } from '@codemirror/view';
 import { history, historyKeymap, defaultKeymap, undo, redo, isolateHistory } from '@codemirror/commands';
 import { epicSyntax, textChange } from './epic-syntax.mjs';
+
+// Leave two visible lines at maximum scroll, adapting to the editor's height.
+const scrollTail = ViewPlugin.fromClass(class {
+  constructor(view) {
+    this.view = view;
+    this.measure = {
+      read: () => Math.max(0, view.scrollDOM.clientHeight - view.defaultLineHeight * 2 - view.documentPadding.top),
+      write: height => {
+        const value = `${height}px`;
+        if (view.dom.style.getPropertyValue('--epic-scroll-tail') !== value) {
+          view.dom.style.setProperty('--epic-scroll-tail', value);
+        }
+      }
+    };
+    this.observer = new ResizeObserver(() => view.requestMeasure(this.measure));
+    this.observer.observe(view.scrollDOM);
+    view.requestMeasure(this.measure);
+  }
+  update(update) {
+    if (update.geometryChanged) this.view.requestMeasure(this.measure);
+  }
+  destroy() { this.observer.disconnect(); }
+});
 
 function syntaxDecorations(doc) {
   const tokens = epicSyntax(doc.toString());
@@ -53,12 +76,21 @@ export function create(parent) {
     });
   };
   const extensions = [
-    history(), syntax, flash, EditorView.lineWrapping,
+    history(), syntax, flash, scrollTail, EditorView.lineWrapping,
+    // Follow typing (including wrapping, Enter, and paste) with breathing room
+    // below the caret. Background/programmatic replacements retain their scroll.
+    EditorState.transactionExtender.of(transaction => {
+      if (!transaction.docChanged || !transaction.isUserEvent('input') || transaction.isUserEvent('input.replace')) return null;
+      return { effects: EditorView.scrollIntoView(transaction.newSelection.main.head, { y: 'nearest', yMargin: 100 }) };
+    }),
     EditorState.allowMultipleSelections.of(false),
     EditorView.contentAttributes.of({ 'aria-label': 'EPIC song editor', spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
     Prec.highest(EditorView.domEventHandlers({
       keydown(event) {
         for (const handler of keyHandlers) handler(event);
+        if (event.defaultPrevented && (event.key === 'Tab' || event.key === 'Enter') && view.hasFocus) {
+          view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'nearest', yMargin: 100 }) });
+        }
         return event.defaultPrevented;
       }
     })),
@@ -73,7 +105,7 @@ export function create(parent) {
       '&': { height: '100%', backgroundColor: '#050505', color: '#f4f4f4', fontSize: '13px' },
       '&.cm-focused': { outline: 'none' },
       '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--mono-font)', lineHeight: '19px' },
-      '.cm-content': { padding: '14px 0', caretColor: '#f4f4f4' },
+      '.cm-content': { padding: '14px 0 var(--epic-scroll-tail, 116px)', caretColor: '#f4f4f4' },
       '.cm-line': { padding: '0 14px' },
       '.cm-cursor': { borderLeftColor: '#f4f4f4' },
       // Keep the multiline hint out of the empty line's layout. Otherwise the

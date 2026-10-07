@@ -189,6 +189,53 @@ const path = require('node:path');
     await page.evaluate(() => { tocDrawer.classList.add('open'); renderSectionToc(); });
     await page.waitForTimeout(250);
     await page.screenshot({ path: path.join(userData, 'editor.png') });
+    // Manual scrolling can bring the last two lines to the top, even after resizing.
+    await load(Array.from({ length: 80 }, (_, i) => `Scroll line ${i}`).join('\n'));
+    for (const height of [900, 650]) {
+      await application.evaluate(({ BrowserWindow }, height) => BrowserWindow.getAllWindows()[0].setSize(1300, height), height);
+      await page.waitForFunction(() => {
+        const view = editor.view;
+        const expected = view.scrollDOM.clientHeight - view.defaultLineHeight * 2 - view.documentPadding.top;
+        return Math.abs(view.documentPadding.bottom - expected) < 2;
+      });
+      await page.evaluate(() => { editor.scrollTop = editor.view.scrollDOM.scrollHeight; });
+      await page.waitForFunction(() => {
+        const view = editor.view, secondLast = view.state.doc.line(view.state.doc.lines - 1);
+        const rect = view.coordsAtPos(secondLast.from), bounds = view.scrollDOM.getBoundingClientRect();
+        return rect && rect.top >= bounds.top && rect.top < bounds.top + 25;
+      });
+    }
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1300, 900));
+
+    // Typing and custom Tab/Enter commands keep the caret above the bottom edge.
+    await load(Array.from({ length: 80 }, (_, i) => `Line ${i}`).join('\n'));
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
+    const caretHasRoom = () => {
+      const view = editor.view, caret = view.coordsAtPos(view.state.selection.main.head);
+      const bounds = view.scrollDOM.getBoundingClientRect();
+      return caret && caret.top >= bounds.top && caret.bottom <= bounds.bottom - 90;
+    };
+    for (let line = 0; line < 4; line++) {
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('Another lyric line');
+      await page.waitForFunction(caretHasRoom);
+    }
+    const previousScroll = await page.evaluate(() => editor.scrollTop);
+    await page.keyboard.type(' wrapped words'.repeat(90));
+    await page.waitForFunction(caretHasRoom);
+    assert.ok(await page.evaluate(() => editor.scrollTop) > previousScroll, 'Soft wrapping scrolls automatically');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('gen');
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(caretHasRoom);
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('ff');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(caretHasRoom);
+    await page.screenshot({ path: path.join(userData, 'caret-follow.png') });
+
+    await load(song);
     const beforeHelp = await read();
     await page.evaluate(() => editor.focus());
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcuts:show'));
