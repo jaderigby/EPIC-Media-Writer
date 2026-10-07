@@ -2447,9 +2447,10 @@ async function openMediaInTab() {
   }
 }
 openBtn.addEventListener('click', () => {
-  if (canChangeFileTab()) openMediaInTab();
+  if (!canChangeFileTab()) return;
+  openMediaInTab();
 });
-document.getElementById('newFileTab').addEventListener('click', () => {
+window.EpicInspector?.onNewBlankDocument?.(() => {
   if (!canChangeFileTab()) return;
   addFileTab();
   editor.focus();

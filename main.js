@@ -217,6 +217,14 @@ function createApplicationMenu(win) {
       label: "File",
       submenu: [
         {
+          label: "New Blank Document",
+          accelerator: "CmdOrCtrl+N",
+          click: () => {
+            if (!win.isDestroyed()) win.webContents.send('document:new-blank');
+          }
+        },
+        { type: "separator" },
+        {
           label: "Save",
           accelerator: "CmdOrCtrl+S",
           click: () => runRendererSave(false)

@@ -121,6 +121,14 @@
       padding: 4px 9px;
     }
 
+    #openBtn { position: relative; background: transparent; min-width: 30px; transition: border-color 180ms ease; }
+    #openBtn::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(0deg, #345cba, #3675cf); transition: opacity 180ms ease; pointer-events: none; }
+    #openBtn .open-label { position: relative; display: inline-block; overflow: hidden; white-space: nowrap; vertical-align: bottom; max-width: 120px; transition: opacity 180ms ease, max-width 180ms ease; }
+    #openBtn .add-symbol { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 20px; line-height: 1; opacity: 0; transition: opacity 180ms ease; }
+    #openBtn.is-add .open-label { opacity: 0; }
+    #openBtn.is-add .open-label { max-width: 0; }
+    #openBtn.is-add .add-symbol { opacity: 1; }
+
     #filePath {
       opacity: 0.75;
       font-size: 0.85em;
@@ -1261,7 +1269,7 @@
   <body>
     <header>
       <div id="headerControls">
-      <button id="openBtn">Open Media</button>
+      <button id="openBtn" aria-label="Open Media"><span class="open-label" aria-hidden="true">Open Media</span><span class="add-symbol" aria-hidden="true">+</span></button>
       <button id="saveBtn" disabled>
         <svg class="icon store-icon">
           <use href="icons.svg#store-icon"></use>
@@ -1297,7 +1305,6 @@
 
     <nav id="fileTabBar" aria-label="Open files">
       <div id="fileTabList" role="tablist" aria-label="File tabs"></div>
-      <button id="newFileTab" type="button" title="New untitled file" aria-label="New untitled file"><span class="new-file-symbol" aria-hidden="true">+</span></button>
     </nav>
 
     <main>
