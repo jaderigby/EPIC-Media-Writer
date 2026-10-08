@@ -2,6 +2,11 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("EpicInspector", {
   platform: process.platform,
+  onCloseTab: handler => {
+    if (typeof handler !== 'function') return;
+    ipcRenderer.removeAllListeners('document:close-tab');
+    ipcRenderer.on('document:close-tab', () => handler());
+  },
   onNewBlankDocument: handler => {
     if (typeof handler !== 'function') return;
     ipcRenderer.removeAllListeners('document:new-blank');

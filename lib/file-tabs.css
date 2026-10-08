@@ -10,6 +10,7 @@
 .file-tab.is-active { background-color: #283e5e; }
 #fileTabBar button { background: transparent; border: 0; color: #dce5f6; font: inherit; font-size: 13px; }
 #fileTabBar .file-tab-select { max-width: 240px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 7px 4px 7px 17px; text-align: left; border-radius: 0; }
+#fileTabBar .file-tab:not(.is-active) .file-tab-select:not(:hover) { color: #9ba4b5; }
 #fileTabBar .file-tab.is-studio-linked .file-tab-select { padding: 7px 4px 7px 5px; }
 #fileTabBar .file-tab-close { padding: 4px 8px; color: #a1add1; border-radius: 0; }
 #fileTabBar .file-tab:first-child .file-tab-select { border-top-left-radius: 4px; }

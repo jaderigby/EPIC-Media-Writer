@@ -18,6 +18,81 @@ const path = require('node:path');
     const read = () => page.evaluate(() => editor.value);
     const load = text => page.evaluate(text => { editor.load(text); sourceEditorText = text; refreshEditorView(); }, text);
     const shortcut = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await load('First\nSecond\nLast');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(8); });
+    await page.keyboard.press(`${shortcut}+l`);
+    assert.equal(await page.evaluate(() => editor.value.slice(editor.selectionStart, editor.selectionEnd)), 'Second\n', 'Cmd+L selects the whole line including its newline');
+    await page.evaluate(() => editor.setSelectionRange(editor.value.length));
+    await page.keyboard.press(`${shortcut}+l`);
+    assert.equal(await page.evaluate(() => editor.value.slice(editor.selectionStart, editor.selectionEnd)), 'Last', 'Cmd+L selects the last line without a trailing newline');
+    await load('First\nSecond\nThird\nFourth');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(8); });
+    await page.keyboard.press('Alt+ArrowUp');
+    assert.equal(await read(), 'Second\nFirst\nThird\nFourth', 'Option+Up moves the current line up');
+    assert.equal(await page.evaluate(() => editor.selectionStart), 2, 'Caret follows the moved line');
+    await page.keyboard.press('Alt+ArrowDown');
+    assert.equal(await read(), 'First\nSecond\nThird\nFourth', 'Option+Down moves the current line down');
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'Second\nFirst\nThird\nFourth', 'Line movement is undoable');
+    await load('First\nSecond\nThird\nFourth');
+    await page.evaluate(() => editor.setSelectionRange(6, 18));
+    await page.keyboard.press('Alt+ArrowUp');
+    assert.equal(await read(), 'Second\nThird\nFirst\nFourth', 'Selected lines move together');
+    await page.keyboard.press('Alt+ArrowUp');
+    assert.equal(await read(), 'Second\nThird\nFirst\nFourth', 'Moving above the first line leaves text unchanged');
+    await load('one one one one');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(0, 3); });
+    await page.keyboard.press(`${shortcut}+d`);
+    await page.keyboard.press(`${shortcut}+k`);
+    assert.deepEqual(await page.evaluate(() => editor.view.state.selection.ranges.map(range => range.from)), [0, 8], 'Cmd+K skips the current match and keeps earlier selections');
+    await page.keyboard.press(`${shortcut}+k`);
+    assert.deepEqual(await page.evaluate(() => editor.view.state.selection.ranges.map(range => range.from)), [0, 12], 'Repeated skipping advances');
+    await page.keyboard.press(`${shortcut}+k`);
+    assert.deepEqual(await page.evaluate(() => editor.view.state.selection.ranges.map(range => range.from)), [0, 4], 'Skipping wraps past already selected matches');
+    assert.equal(await page.locator('.epic-skip-notice').textContent(), 'skipped');
+    assert.equal(await page.locator('.epic-skip-notice').count(), 1, 'Repeated skips reuse one notice');
+    assert.ok(await page.locator('.epic-skip-notice').evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return Math.abs(box.x + box.width / 2 - innerWidth / 2) < 1 &&
+        Math.abs(box.y + box.height / 2 - innerHeight / 2) < 1;
+    }), 'Skip notice is centered in the window');
+    assert.equal(await page.evaluate(() => editor.hasFocus), true, 'Notice does not steal focus');
+    await page.locator('.epic-skip-notice').waitFor({ state: 'detached' });
+    await page.keyboard.type('two');
+    assert.equal(await read(), 'two two one one', 'Skipped occurrences remain unchanged when typing');
+    await load('echo Echo echo\necho');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(10, 14); });
+    for (const count of [2, 3, 3]) {
+      await page.keyboard.press(`${shortcut}+d`);
+      assert.equal(await page.evaluate(() => editor.view.state.selection.ranges.length), count, 'Cmd+D adds matches, wraps, and stops when all are selected');
+    }
+    assert.equal(await page.locator('.cm-extra-selection').count(), 2, 'Additional selections are visible');
+    await page.keyboard.type('song');
+    assert.equal(await read(), 'song Echo song\nsong', 'Typing replaces every selected occurrence, case sensitively');
+    assert.equal(await page.locator('.cm-extra-cursor').count(), 2, 'Additional cursors remain visible after typing');
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'echo Echo echo\necho', 'Undo restores all replacements together');
+    await load('Sing these words aloud');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(5, 16); });
+    for (const marker of ['*', '**', '']) {
+      await page.keyboard.press('Meta+8');
+      assert.equal(await read(), `Sing ${marker}these words${marker} aloud`, 'Cmd+8 cycles emphasis markers');
+      assert.equal(await page.evaluate(() => editor.value.slice(editor.selectionStart, editor.selectionEnd)), 'these words', 'Words remain selected for cycling');
+    }
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'Sing **these words** aloud', 'Each cycle is independently undoable');
+    await page.keyboard.press(`${shortcut}+Shift+z`);
+    assert.equal(await read(), 'Sing these words aloud');
+    for (const [input, output] of [['*words*', '**words**'], ['**words**', 'words']]) {
+      await load(input);
+      await page.evaluate(() => editor.setSelectionRange(0, editor.value.length));
+      await page.keyboard.press('Meta+8');
+      assert.equal(await read(), output, 'Selections including markers also cycle');
+    }
+    await page.evaluate(() => editor.setSelectionRange(2));
+    await page.keyboard.press('Meta+8');
+    assert.equal(await read(), 'words', 'An empty selection is unchanged');
+    await load('');
     await page.locator('.cm-content').click();
     await page.keyboard.press('Tab');
     assert.match(await read(), /^---\nTitle: Untitled/);
@@ -57,8 +132,24 @@ const path = require('node:path');
       await load(text);
       await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
       await page.keyboard.press('Tab');
-      assert.equal(await read(), text, 'Trigger does not expand inside ordinary text');
+      assert.equal(await read(), text + '    ', 'Ordinary Tab inserts four spaces without expanding triggers');
+      assert.equal(await page.evaluate(() => editor.hasFocus), true, 'Tab keeps editor focus');
+      await page.keyboard.press(`${shortcut}+z`);
+      assert.equal(await read(), text, 'Tab insertion is undoable');
     }
+
+    await load('a  b\n c ');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(1, 7); });
+    assert.equal(await page.locator('.cm-selected-space').count(), 3, 'Only selected spaces have dots, across lines');
+    assert.ok(await page.locator('.cm-selected-space').first().evaluate(element =>
+      Math.abs(parseFloat(getComputedStyle(element, '::after').top) - element.getBoundingClientRect().height / 2) < 1
+    ), 'Dots are vertically centered');
+    assert.equal(await read(), 'a  b\n c ', 'Dots do not alter the document');
+    await page.keyboard.press('Tab');
+    assert.equal(await read(), 'a     ', 'Tab replaces selected text with four spaces');
+    assert.equal(await page.locator('.cm-selected-space').count(), 0, 'Dots disappear when selection collapses');
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'a  b\n c ', 'Undo restores replaced selection text');
 
     for (const exitKey of ['Enter', 'Tab']) {
       await load('');
@@ -177,6 +268,18 @@ const path = require('node:path');
     await page.keyboard.press('Tab');
     assert.ok(await page.evaluate(() => editor.selectionStart > editor.value.indexOf('Title:')), 'Header Tab navigation survives');
 
+    await load(Array.from({ length: 180 }, (_, i) => i % 60 === 0 ? 'match' : `Line ${i}`).join('\n'));
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(0, 5); });
+    for (const key of ['d', 'k']) {
+      await page.keyboard.press(`${shortcut}+${key}`);
+      await page.waitForFunction(() => {
+        const view = editor.view;
+        const caret = view.coordsAtPos(view.state.selection.main.head);
+        const viewport = view.scrollDOM.getBoundingClientRect();
+        return caret && Math.abs((caret.top + caret.bottom) / 2 - (viewport.top + viewport.bottom) / 2) < 25;
+      });
+    }
+
     const largeSong = Array.from({ length: 1500 }, (_, i) => `${i + 1}\n00:01.000\n[Verse]\nLyric ${i}\n`).join('\n');
     await load(largeSong);
     assert.equal(await read(), largeSong);
@@ -238,11 +341,22 @@ const path = require('node:path');
     await load(song);
     const beforeHelp = await read();
     await page.evaluate(() => editor.focus());
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcuts:show'));
+    const beforeDrawerShortcut = await page.evaluate(() => ({ open: tocDrawer.classList.contains('open'), caret: editor.selectionStart }));
+    for (const key of ['ArrowUp', 'ArrowDown']) {
+      await page.keyboard.press(`Meta+Alt+${key}`);
+      assert.equal(await page.evaluate(() => tocDrawer.classList.contains('open')), key === 'ArrowUp' ? !beforeDrawerShortcut.open : beforeDrawerShortcut.open, 'Both vertical shortcuts toggle the drawer');
+      assert.equal(await page.evaluate(() => editor.selectionStart), beforeDrawerShortcut.caret, 'Drawer shortcut leaves caret unchanged');
+      assert.equal(await page.evaluate(() => editor.hasFocus), true, 'Drawer shortcut keeps editor focus');
+    }
+    await page.keyboard.press('Meta+/');
     await page.waitForSelector('#shortcutHelp[open]');
+    assert.ok((await page.locator('#shortcutHelp').innerText()).includes('plain → *emphasis* → **bold** → plain'), 'Help lists emphasis cycling');
+    await page.keyboard.press('Meta+/');
+    assert.equal(await page.locator('#shortcutHelp').count(), 1, 'Repeated help shortcut keeps a single panel');
     assert.ok(await page.locator('#shortcutHelp').innerText().then(text => text.includes('gen → Tab') && text.includes('[Generation]\nStyles:')));
     const drawerWasOpen = await page.evaluate(() => tocDrawer.classList.contains('open'));
     await page.keyboard.press('n');
+    await page.keyboard.press('Meta+Alt+ArrowUp');
     assert.equal(await page.evaluate(() => tocDrawer.classList.contains('open')), drawerWasOpen, 'Help blocks background shortcuts');
     await page.screenshot({ path: path.join(userData, 'shortcuts.png') });
     await page.keyboard.press('Escape');

@@ -99,6 +99,7 @@ async function saveLinkedStudioProject() {
     if (currentMetadata) currentMetadata.epicx = sourceEditorText;
     statusEl.textContent = merged.ok ? 'Project saved in Studio.' : merged.message;
     scheduleEpicValidation(); updateHeaderState(); saveSessionState();
+    return merged.ok;
   } finally { isProjectSaveInProgress = false; }
 }
 
@@ -568,13 +569,19 @@ function showConfirmModal({
   title = "Confirm",
   message,
   confirmLabel = "Yes",
-  cancelLabel = "Cancel"
+  cancelLabel = "Cancel",
+  alternateLabel = null
 }) {
   const modal = document.getElementById("confirmModal");
   const titleEl = document.getElementById("confirmModalTitle");
   const messageEl = document.getElementById("confirmModalMessage");
   const yesBtn = document.getElementById("confirmModalYesBtn");
   const cancelBtn = document.getElementById("confirmModalCancelBtn");
+  const alternateBtn = document.createElement('button');
+  if (alternateLabel) {
+    alternateBtn.textContent = alternateLabel;
+    yesBtn.after(alternateBtn);
+  }
 
   return new Promise((resolve) => {
     titleEl.textContent = title;
@@ -590,11 +597,13 @@ function showConfirmModal({
       cancelBtn.removeEventListener("click", onCancel);
       modal.removeEventListener("click", onBackdrop);
       window.removeEventListener("keydown", onKeydown);
+      alternateBtn.remove();
       resolve(value);
     };
 
     const onYes = () => close(true);
     const onCancel = () => close(false);
+    alternateBtn.addEventListener('click', () => close('alternate'));
 
     const onBackdrop = (event) => {
       if (event.target === modal) close(false);
@@ -602,7 +611,7 @@ function showConfirmModal({
 
     const onKeydown = (event) => {
       if (event.key === "Escape") close(false);
-      if (event.key === "Enter") close(true);
+      if (event.key === "Enter") close(alternateLabel ? 'alternate' : true);
     };
 
     yesBtn.addEventListener("click", onYes);
@@ -2450,11 +2459,26 @@ openBtn.addEventListener('click', () => {
   if (!canChangeFileTab()) return;
   openMediaInTab();
 });
-window.EpicInspector?.onNewBlankDocument?.(() => {
+function newBlankDocument() {
   if (!canChangeFileTab()) return;
   addFileTab();
   editor.focus();
-});
+}
+window.EpicInspector?.onNewBlankDocument?.(newBlankDocument);
+window.EpicInspector?.onCloseTab?.(() => closeFileTab(activeFileTabId));
+window.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'w') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) closeFileTab(activeFileTabId);
+}, true);
+window.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey ||
+      event.key.toLowerCase() !== 't') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) newBlankDocument();
+}, true);
 
 function toggleTocDrawer() {
   const willOpen =
@@ -2497,6 +2521,18 @@ function shouldIgnoreHotkey(event) {
   if (!document.getElementById("confirmModal")?.classList.contains("hidden")) return true;
   return false;
 }
+
+// Handle the drawer shortcut before CodeMirror interprets arrow navigation.
+window.addEventListener("keydown", (event) => {
+  if (!event.metaKey || !event.altKey || event.ctrlKey || event.shiftKey ||
+      !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.repeat || emotiveState || document.querySelector('#shortcutHelp[open]') ||
+      !document.getElementById("confirmModal")?.classList.contains("hidden") ||
+      !tocDrawer || tocDrawer.classList.contains("is-hidden")) return;
+  toggleTocDrawer();
+}, true);
 
 window.addEventListener("keydown", (event) => {
   const key = String(event.key || "").toLowerCase();
@@ -2689,8 +2725,7 @@ async function performSave({ saveAs = false } = {}) {
           "This project is linked to Studio, which saves it. Unlink it from Studio first to use Save As.";
         return;
       }
-      await saveLinkedStudioProject();
-      return;
+      return await saveLinkedStudioProject();
     }
     statusEl.textContent = saveAs ? "Save As..." : "Saving...";
 
@@ -2719,7 +2754,7 @@ async function performSave({ saveAs = false } = {}) {
 
       saveSessionState();
       updateHeaderState();
-      return;
+      return true;
     }
 
     if (isTextFile) {
@@ -2730,7 +2765,7 @@ async function performSave({ saveAs = false } = {}) {
           ? `Saved text and updated audio:\n${getDisplayName(result.filePath)} ↔ ${getDisplayName(linkedAudioPath)}`
           : `Saved text file:\n${getDisplayName(result.filePath)}`;
 
-      return;
+      return true;
     }
 
     if (!currentFilePath) {
@@ -2753,7 +2788,7 @@ async function performSave({ saveAs = false } = {}) {
 
       saveSessionState();
       updateHeaderState();
-      return;
+      return true;
     }
 
     const result = await window.EpicInspector.saveMedia({
@@ -2785,6 +2820,7 @@ async function performSave({ saveAs = false } = {}) {
 
     saveSessionState();
     updateHeaderState();
+    return result.verified !== false;
 
   } catch (err) {
     console.error(err);
@@ -3850,6 +3886,13 @@ window.EpicInspector?.onEditorHistoryAction?.((action) => {
 window.EpicInspector?.onStudioTimingMenuAction?.(handleStudioTimingMenuAction);
 updateHeaderState();
 window.EpicInspector?.onShowShortcuts?.(() => window.EpicShortcutHelp.show(TAB_TRIGGERS));
+window.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey ||
+      event.key !== '/') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) window.EpicShortcutHelp.show(TAB_TRIGGERS);
+}, true);
 metadataPanel.addEventListener('input', saveSessionState);
 
 let fileDragDepth = 0;

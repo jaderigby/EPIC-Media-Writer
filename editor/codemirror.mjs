@@ -1,7 +1,152 @@
-import { EditorState, StateEffect, StateField, Compartment, Prec, Transaction } from '@codemirror/state';
-import { EditorView, Decoration, ViewPlugin, keymap, placeholder } from '@codemirror/view';
-import { history, historyKeymap, defaultKeymap, undo, redo, isolateHistory } from '@codemirror/commands';
+import { EditorState, EditorSelection, StateEffect, StateField, Compartment, Prec, Transaction } from '@codemirror/state';
+import { EditorView, Decoration, ViewPlugin, WidgetType, keymap, placeholder } from '@codemirror/view';
+import { history, historyKeymap, defaultKeymap, undo, redo, isolateHistory, selectLine } from '@codemirror/commands';
 import { epicSyntax, textChange } from './epic-syntax.mjs';
+
+// Keep the insertion policy in one place for future editor preferences.
+const tabText = ' '.repeat(4);
+function insertTabSpaces(view) {
+  if (view.state.readOnly) return false;
+  view.dispatch(view.state.replaceSelection(tabText), {
+    scrollIntoView: true, annotations: Transaction.userEvent.of('input.type')
+  });
+  return true;
+}
+
+function cycleEmphasis(view) {
+  const { state } = view;
+  const selection = state.selection.main;
+  if (state.readOnly || selection.empty) return true;
+  let { from, to } = selection;
+  let text = state.doc.sliceString(from, to), width = 0;
+  // Accept either the words alone or a selection including their markers.
+  const wrapped = /^(\*{1,2})(?!\*)([\s\S]*?[^*])\1$/.exec(text);
+  if (wrapped) {
+    width = wrapped[1].length;
+    text = wrapped[2];
+  } else {
+    const before = state.doc.sliceString(Math.max(0, from - 3), from).match(/\*+$/)?.[0].length || 0;
+    const after = state.doc.sliceString(to, Math.min(state.doc.length, to + 3)).match(/^\*+/)?.[0].length || 0;
+    if (before === after && before > 0 && before <= 2) {
+      width = before;
+      from -= width;
+      to += width;
+    }
+  }
+  const nextWidth = (width + 1) % 3;
+  const marker = '*'.repeat(nextWidth);
+  const start = from + nextWidth, end = start + text.length;
+  view.dispatch({
+    changes: { from, to, insert: marker + text + marker },
+    selection: selection.anchor > selection.head ? { anchor: end, head: start } : { anchor: start, head: end },
+    annotations: [Transaction.userEvent.of('input.emphasis'), isolateHistory.of('full')],
+    scrollIntoView: true
+  });
+  return true;
+}
+
+const selectedSpace = Decoration.mark({ class: 'cm-selected-space' });
+const secondarySelection = Decoration.mark({ class: 'cm-extra-selection' });
+class ExtraCursor extends WidgetType {
+  toDOM() {
+    const cursor = document.createElement('span');
+    cursor.className = 'cm-extra-cursor';
+    cursor.setAttribute('aria-hidden', 'true');
+    return cursor;
+  }
+}
+const extraCursor = Decoration.widget({ widget: new ExtraCursor(), side: 1 });
+
+const skippedEffect = StateEffect.define();
+const skipNotice = ViewPlugin.fromClass(class {
+  constructor() {
+    this.notice = document.createElement('div');
+    this.notice.className = 'epic-skip-notice';
+    this.notice.setAttribute('role', 'status');
+    Object.assign(this.notice.style, {
+      position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+      zIndex: '10000', pointerEvents: 'none', opacity: '0',
+      padding: '10px 20px', borderRadius: '8px', background: 'rgba(31, 33, 38, .94)',
+      color: '#e8e9ec', font: '14px system-ui, sans-serif', boxShadow: '0 4px 20px #0005'
+    });
+  }
+  update(update) {
+    if (!update.transactions.some(transaction => transaction.effects.some(effect => effect.is(skippedEffect)))) return;
+    this.animation?.cancel();
+    this.notice.textContent = 'skipped';
+    document.body.append(this.notice);
+    this.animation = this.notice.animate([
+      // Keep fade timing independent of the fully visible pause.
+      { opacity: 0, offset: 0, easing: 'ease-out' },
+      { opacity: 1, offset: 100 / 1300 },
+      { opacity: 1, offset: 1200 / 1300, easing: 'ease-in' },
+      { opacity: 0, offset: 1 }
+    ], { duration: 1300, easing: 'linear' });
+    this.animation.onfinish = () => this.notice.remove();
+  }
+  destroy() { this.animation?.cancel(); this.notice.remove(); }
+});
+
+function selectNextOccurrence(view, skipCurrent = false) {
+  const { state } = view;
+  const main = state.selection.main;
+  if (main.empty) {
+    if (skipCurrent) return true;
+    const word = state.wordAt(main.head);
+    if (word) view.dispatch({ selection: EditorSelection.create([word]), scrollIntoView: true });
+    return true;
+  }
+  const text = state.doc.toString(), query = text.slice(main.from, main.to);
+  for (const [start, end] of [[main.to, text.length], [0, main.from]]) {
+    let position = text.indexOf(query, start);
+    while (position >= 0 && position + query.length <= end) {
+      const to = position + query.length;
+      if (!state.selection.ranges.some(range => position < range.to && to > range.from)) {
+        const next = EditorSelection.range(position, to);
+        const kept = state.selection.ranges.filter(range => range !== main);
+        view.dispatch({
+          selection: skipCurrent
+            ? EditorSelection.create([...kept, next], kept.length)
+            : state.selection.addRange(next),
+          effects: [EditorView.scrollIntoView(next, { y: 'center' }), ...(skipCurrent ? [skippedEffect.of(null)] : [])], userEvent: 'select'
+        });
+        return true;
+      }
+      position = text.indexOf(query, position + 1);
+    }
+  }
+  return true;
+}
+
+function selectedSpaceDecorations(view) {
+  const marks = [];
+  for (const selection of view.state.selection.ranges) {
+    if (selection.empty && selection !== view.state.selection.main &&
+        view.visibleRanges.some(range => selection.head >= range.from && selection.head <= range.to)) {
+      marks.push(extraCursor.range(selection.head));
+    }
+    for (const visible of view.visibleRanges) {
+      const from = Math.max(selection.from, visible.from);
+      const to = Math.min(selection.to, visible.to);
+      if (from >= to) continue;
+      // Keep the main selection native; only paint additional selections.
+      if (selection !== view.state.selection.main) marks.push(secondarySelection.range(from, to));
+      const text = view.state.doc.sliceString(from, to);
+      for (let i = 0; i < text.length; i++) {
+        if (text[i] === ' ') marks.push(selectedSpace.range(from + i, from + i + 1));
+      }
+    }
+  }
+  return Decoration.set(marks, true);
+}
+const selectedSpaces = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = selectedSpaceDecorations(view); }
+  update(update) {
+    if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      this.decorations = selectedSpaceDecorations(update.view);
+    }
+  }
+}, { decorations: plugin => plugin.decorations });
 
 // Leave two visible lines at maximum scroll, adapting to the editor's height.
 const scrollTail = ViewPlugin.fromClass(class {
@@ -76,14 +221,14 @@ export function create(parent) {
     });
   };
   const extensions = [
-    history(), syntax, flash, scrollTail, EditorView.lineWrapping,
+    history(), syntax, flash, scrollTail, selectedSpaces, skipNotice, EditorView.lineWrapping,
     // Follow typing (including wrapping, Enter, and paste) with breathing room
     // below the caret. Background/programmatic replacements retain their scroll.
     EditorState.transactionExtender.of(transaction => {
       if (!transaction.docChanged || !transaction.isUserEvent('input') || transaction.isUserEvent('input.replace')) return null;
       return { effects: EditorView.scrollIntoView(transaction.newSelection.main.head, { y: 'nearest', yMargin: 100 }) };
     }),
-    EditorState.allowMultipleSelections.of(false),
+    EditorState.allowMultipleSelections.of(true),
     EditorView.contentAttributes.of({ 'aria-label': 'EPIC song editor', spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
     Prec.highest(EditorView.domEventHandlers({
       keydown(event) {
@@ -94,7 +239,7 @@ export function create(parent) {
         return event.defaultPrevented;
       }
     })),
-    keymap.of([...historyKeymap, ...defaultKeymap]),
+    keymap.of([{ key: 'Mod-l', run: selectLine }, { key: 'Mod-d', run: selectNextOccurrence }, { key: 'Mod-k', run: view => selectNextOccurrence(view, true) }, { key: 'Meta-8', run: cycleEmphasis }, { key: 'Tab', run: insertTabSpaces }, ...historyKeymap, ...defaultKeymap]),
     ghost.of(placeholder('')),
     EditorView.updateListener.of(update => {
       if (!update.docChanged) return;
@@ -108,6 +253,15 @@ export function create(parent) {
       '.cm-content': { padding: '14px 0 var(--epic-scroll-tail, 116px)', caretColor: '#f4f4f4' },
       '.cm-line': { padding: '0 14px' },
       '.cm-cursor': { borderLeftColor: '#f4f4f4' },
+      '.cm-extra-selection': { backgroundColor: '#315d8d' },
+      '.cm-extra-cursor': { borderLeft: '1px solid #f4f4f4', marginLeft: '-1px', pointerEvents: 'none' },
+      '.cm-selected-space': { position: 'relative' },
+      '.cm-selected-space::after': {
+        content: '""', position: 'absolute', left: '50%', top: '50%',
+        width: '2px', height: '2px', borderRadius: '50%',
+        backgroundColor: 'currentColor', transform: 'translate(-50%, -50%)',
+        pointerEvents: 'none'
+      },
       // Keep the multiline hint out of the empty line's layout. Otherwise the
       // native caret grows to the height of the entire placeholder widget.
       '.cm-line:has(.cm-placeholder)': { position: 'relative' },

@@ -235,7 +235,11 @@ function createApplicationMenu(win) {
           click: () => runRendererSave(true)
         },
         { type: "separator" },
-        isMac ? { role: "close" } : { role: "quit" }
+        {
+          label: 'Close Tab', accelerator: 'CmdOrCtrl+W',
+          click: () => { if (!win.isDestroyed()) win.webContents.send('document:close-tab'); }
+        },
+        ...(!isMac ? [{ role: 'quit' }] : [])
       ]
     },
     {
@@ -276,6 +280,7 @@ function createApplicationMenu(win) {
       label: "Help",
       submenu: [{
         label: "Keyboard Shortcuts & Tab Triggers…",
+        accelerator: 'CommandOrControl+/',
         click: () => {
           if (!win.isDestroyed()) win.webContents.send("shortcuts:show");
         }
