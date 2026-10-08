@@ -3016,8 +3016,6 @@ function installEmotiveRecipeStyles() {
 .emo-layer-name { margin: 10px 0 6px; font-size: 11px; color: var(--emo-muted); }
 .emo-layer-name:first-of-type { margin-top: 0; }
 .emo-hint, .emo-empty { color: var(--emo-muted); font-size: 13px; }
-.emo-delete { border-color: var(--emo-border); color: var(--emo-muted); }
-.emo-delete:hover:not(:disabled) { background: #d9534f; border-color: #d9534f; color: #fff; }
 .emo-text-row { display: flex; gap: 8px; position: relative; }
 .emo-text-wrap { position: relative; flex: 1; min-width: 0; }
 .emo-text-input { width: 100%; box-sizing: border-box; font: inherit; color: inherit; background: rgba(127,127,127,.12);
@@ -3088,7 +3086,7 @@ function installEmotiveRecipeStyles() {
 .emo-choice.is-on { background: var(--emo-accent); color: var(--emo-accent-fg); border-color: var(--emo-accent); font-weight: 600; }
 
 .emo-container {
-  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px;
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 10px;
   border: 1px solid var(--emo-border); border-radius: 10px;
 }
 .emo-container.is-draft { border: 1px dashed var(--emo-accent); }
@@ -3101,6 +3099,7 @@ function installEmotiveRecipeStyles() {
 .emo-recipes { display: flex; flex-direction: column; gap: 8px; }
 .emo-recipes > .emo-container { position: relative; transition: border-color .15s ease, background-color .15s ease, color .15s ease; cursor: pointer; }
 .emo-container.is-current {
+  padding: 8px 8px 8px 10px;
   margin-top: 17px; margin-bottom: 30px; color: #fff;
   background-color: rgb(53 78 155 / 26%); border-color: #4e63a8;
 }
@@ -3120,7 +3119,27 @@ function installEmotiveRecipeStyles() {
   border-radius: 0 9px 9px 0; background: var(--emo-accent); color: var(--emo-accent-fg);
   visibility: hidden; opacity: 0; transition: opacity .15s ease, visibility .15s ease;
 }
-.emo-container:has(.emo-delete) .emo-use { right: 40px; border-radius: 0; }
+.emo-container:has(.emo-actions) { padding-right: 128px; }
+.emo-actions {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 120px;
+  display: flex; border-radius: 0 9px 9px 0; overflow: hidden;
+  background-color: transparent; transition: background-color .15s ease;
+}
+.emo-container:hover .emo-actions { background-color: var(--emo-accent); }
+.emo-actions .emo-use {
+  position: static; flex: 1; width: 80px; border: 0; border-radius: 0;
+  padding: 0; font: inherit; font-weight: 700; cursor: pointer; background: transparent;
+}
+.emo-actions .emo-delete {
+  display: flex; align-items: center; justify-content: center; width: 40px;
+  box-sizing: border-box; padding: 0; border: 0; border-left: 2px solid transparent;
+  border-radius: 0; background-color: transparent; color: var(--emo-muted);
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.emo-container:hover .emo-delete { color: #000; border-left-color: #6e8ce5; }
+.emo-actions .emo-delete:hover:not(:disabled) {
+  background-color: rgb(111 141 231); color: rgb(121 31 28);
+}
 .emo-container:not(.is-current):hover .emo-reference .emo-source { visibility: hidden; }
 .emo-container:not(.is-current):hover .emo-use { visibility: visible; opacity: 1; }
 .emo-recipe { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; border: 0; border-radius: 6px; padding: 6px; text-align: left; font: inherit; color: inherit; background: transparent; cursor: pointer; }
@@ -3621,8 +3640,8 @@ function openEmotiveRecipeDialog(lineIndex) {
     lineIndex,
     sectionName: parsed.name,
     recipes: getEmotiveRecipeLibrary(),
-    originalText: editor.value,
-    originalRecipes: emotiveSessionRecipes.map(items => [...items]),
+    originalRecipeKey: emotiveRecipeKey(getSectionRecipeItems(lineIndex)),
+    originalLabels: getSectionLabelRun(editor.value.split('\n'), lineIndex).map(index => ({ index, text: editor.value.split('\n')[index] })),
     textValue: "",
     textError: "",
     paletteOpen: false,
@@ -3650,8 +3669,43 @@ function closeEmotiveRecipeDialog() {
   if (previousFocus && document.contains(previousFocus)) previousFocus.focus();
 }
 
+editor.addEventListener('input', event => {
+  if (!emotiveState || !['historyUndo', 'historyRedo'].includes(event.inputType)) return;
+  const state = emotiveState;
+  const parsed = parseSectionLabelLine(editor.value.split('\n')[state.lineIndex]);
+  if (!parsed) { closeEmotiveRecipeDialog(); return; }
+  const focused = document.activeElement;
+  const hadPanelFocus = state.overlay.contains(focused);
+  const action = focused?.dataset?.action;
+  const recipeKey = focused?.dataset?.recipeKey;
+  const inputSelection = focused?.classList.contains('emo-text-input')
+    ? [focused.selectionStart, focused.selectionEnd] : null;
+  state.sectionName = parsed.name;
+  state.recipes = getEmotiveRecipeLibrary();
+  renderEmotiveDialog();
+  if (hadPanelFocus) {
+    const replacement = [...state.overlay.querySelectorAll('button')].find(button =>
+      recipeKey ? button.dataset.recipeKey === recipeKey && button.dataset.action === action
+        : action && button.dataset.action === action);
+    const input = state.overlay.querySelector('.emo-text-input');
+    (replacement || input)?.focus();
+    if (inputSelection) input?.setSelectionRange(...inputSelection);
+  }
+});
+
 function handleEmotiveDialogKeydown(event) {
   if (document.querySelector('#shortcutHelp[open]')) return;
+  if ((event.metaKey || event.ctrlKey) && !event.altKey &&
+      !event.target?.classList?.contains('emo-text-input')) {
+    const key = event.key.toLowerCase();
+    const action = key === 'z' ? (event.shiftKey ? 'redo' : 'undo') : key === 'y' ? 'redo' : null;
+    if (action) {
+      event.preventDefault();
+      event.stopPropagation();
+      applyEditorHistoryAction(action);
+      return;
+    }
+  }
   if (event.key === "Enter" && event.target?.classList?.contains("emo-text-input")) {
     event.preventDefault();
     event.stopPropagation();
@@ -3699,19 +3753,20 @@ function renderEmotiveDialog() {
     ? displayedRecipes.map(recipe => {
         const key = emotiveRecipeKey(recipe.items);
         const assigned = key === currentKey;
+        const deletable = !assigned && !usedKeys.has(key);
         return `<div class="emo-container${assigned ? " is-current" : ""}">
           <button type="button" class="emo-recipe"
             data-recipe-key="${escapeHtml(key)}" aria-pressed="${assigned}"
             ${assigned ? 'aria-current="true"' : ''}>
             <span class="emo-items">${escapeHtml(recipe.items.join(", "))}</span>
-            ${assigned ? '<span class="emo-source">Applied</span>' : `<span class="emo-reference"><span class="emo-source">${escapeHtml(recipe.source || '')}</span><span class="emo-use" aria-hidden="true">Use</span></span>`}
+            ${assigned ? '<span class="emo-source">Applied</span>' : `<span class="emo-reference"><span class="emo-source">${escapeHtml(recipe.source || '')}</span>${deletable ? '' : '<span class="emo-use" aria-hidden="true">Use</span>'}</span>`}
           </button>
           ${assigned ? `<button type="button" class="emo-x" data-action="remove-section-recipe"
-            title="Remove from this section" aria-label="Remove from this section">×</button>` : !usedKeys.has(key) ? `<button type="button" class="emo-x emo-delete"
+            title="Remove from this section" aria-label="Remove from this section">×</button>` : deletable ? `<div class="emo-actions"><button type="button" class="emo-use" data-recipe-key="${escapeHtml(key)}">Use</button><button type="button" class="emo-x emo-delete"
             data-action="delete-recipe" data-recipe-key="${escapeHtml(key)}"
             title="Delete recipe" aria-label="Delete recipe">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>
-          </button>` : ''}
+          </button></div>` : ''}
         </div>`;
       }).join('')
     : '<div class="emo-empty">No recipes yet. Type one above.</div>';
@@ -3752,16 +3807,19 @@ function renderEmotiveDialog() {
           <div class="emo-recipes">${recipesHtml}</div>
         </div>
       </div>
-      <div class="emo-footer">
-        <button type="button" class="emo-btn" data-action="cancel">Cancel</button>
-        <button type="button" class="emo-btn emo-btn-primary" data-action="close">Done</button>
-      </div>
+      ${currentKey !== state.originalRecipeKey ? `<div class="emo-footer">
+        <button type="button" class="emo-btn emo-btn-primary" data-action="undo-recipe">Undo</button>
+      </div>` : ''}
     </div>`;
 }
 
 function handleEmotiveDialogClick(event) {
   const state = emotiveState;
   if (!state) return;
+  if (event.target === state.overlay) {
+    closeEmotiveRecipeDialog();
+    return;
+  }
 
   const target = event.target.closest("button") ||
     event.target.closest(".emo-container")?.querySelector(".emo-recipe");
@@ -3840,13 +3898,16 @@ function handleEmotiveDialogClick(event) {
     return;
   }
 
-  if (action === "cancel") {
-    if (editor.value !== state.originalText) {
-      replaceEditorText(state.originalText);
-      refreshEditorView();
-    }
-    emotiveSessionRecipes.splice(0, emotiveSessionRecipes.length, ...state.originalRecipes);
-    closeEmotiveRecipeDialog();
+  if (action === "undo-recipe") {
+    const lines = editor.value.split('\n');
+    for (const label of state.originalLabels) lines[label.index] = label.text;
+    const scrollTop = editor.scrollTop;
+    replaceEditorText(lines.join('\n'));
+    editor.scrollTop = scrollTop;
+    refreshEditorView();
+    state.recipes = getEmotiveRecipeLibrary();
+    renderEmotiveDialog();
+    state.overlay.querySelector('.emo-text-input')?.focus();
     return;
   }
 
@@ -3879,7 +3940,7 @@ openMediaInTab = lockFileOperation(openMediaInTab);
 
 restoreSessionState();
 window.EpicInspector?.onEditorHistoryAction?.((action) => {
-  editor.focus();
+  if (!emotiveState) editor.focus();
 
   applyEditorHistoryAction(action);
 });
