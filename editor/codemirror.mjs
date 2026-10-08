@@ -306,6 +306,17 @@ export function create(parent) {
       });
       notifyInput('insertReplacementText');
     },
+    // Apply a document-level command as one CodeMirror history event.
+    applyDocumentEdit(changes, cursor) {
+      if (view.state.readOnly || view.state.selection.ranges.length !== 1) return false;
+      view.dispatch({
+        changes,
+        selection: { anchor: cursor },
+        annotations: [Transaction.userEvent.of('input.splitSelection'), isolateHistory.of('full')],
+        scrollIntoView: true
+      });
+      return true;
+    },
     get selectionStart() { return view.state.selection.main.from; },
     get selectionEnd() { return view.state.selection.main.to; },
     setSelectionRange(start, end = start) {

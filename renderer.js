@@ -2357,7 +2357,74 @@ editor.addEventListener("input", () => {
   rememberAuthorKeyCorrection();
 });
 
+// Split a selected payload span into a new EPICX entry (+2 seconds).
+// Only the selected characters move; no whitespace or punctuation inference.
+function splitEpicxSelection() {
+  const view = editor.view;
+  if (view.state.selection.ranges.length !== 1) return false;
+  const { from, to } = view.state.selection.main;
+  if (from === to) return false;
+
+  const source = editor.value;
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const lines = [];
+  const linePattern = /[^\n]*(?:\n|$)/g;
+  for (const match of source.matchAll(linePattern)) {
+    if (!match[0]) continue;
+    const raw = match[0];
+    lines.push({ start: match.index, end: match.index + raw.replace(/\r?\n$/, '').length,
+      text: raw.replace(/\r?\n$/, '') });
+  }
+  const starts = [];
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (/^\s*\d+\s*$/.test(lines[i].text) && isEpicxTimestampLine(lines[i + 1].text)) starts.push(i);
+  }
+  const owner = starts.findIndex((lineIndex, index) => {
+    const end = index + 1 < starts.length ? lines[starts[index + 1]].start : source.length;
+    return from >= lines[lineIndex].start && to <= end;
+  });
+  if (owner < 0) return false;
+  const startLine = starts[owner];
+  const nextStart = owner + 1 < starts.length ? lines[starts[owner + 1]].start : source.length;
+  const headerLine = lines[startLine + 2];
+  if (!headerLine || !/^\s*\[[^\n]*\]\s*$/.test(headerLine.text)) return false;
+  const payloadStart = headerLine.end + (source.slice(headerLine.end).startsWith('\r\n') ? 2 : 1);
+  if (from < payloadStart || to > nextStart || source.slice(from, to).includes('\n')) return false;
+  // Restrict selection to the payload, not the separator preceding another entry.
+  const payloadEnd = source.slice(payloadStart, nextStart).replace(/(?:\r?\n)+$/, '').length + payloadStart;
+  if (to > payloadEnd) return false;
+  const originalTimestamp = lines[startLine + 1].text.trim();
+  const timestampStart = originalTimestamp.split(/\s*-->\s*/)[0];
+  const nextTimestamp = millisecondsToTimestamp(timestampToMilliseconds(timestampStart) + 2000, timestampStart);
+  const selected = source.slice(from, to);
+  const originalNumber = Number(lines[startLine].text.trim());
+  const prefix = source.slice(0, from);
+  const suffix = source.slice(to, nextStart);
+  const currentPayload = source.slice(payloadStart, from) + suffix.replace(/(?:\r?\n)+$/, '');
+  const entryPrefix = source.slice(lines[startLine].start, payloadStart);
+  const updatedEntry = entryPrefix + currentPayload + newline + newline +
+    `${originalNumber + 1}${newline}${nextTimestamp}${newline}${headerLine.text}${newline}${selected}`;
+  const changes = [{ from: lines[startLine].start, to: nextStart, insert: updatedEntry + (nextStart < source.length ? newline + newline : '') }];
+  for (let i = owner + 1; i < starts.length; i++) {
+    const line = lines[starts[i]];
+    changes.push({ from: line.start, to: line.end, insert: String(Number(line.text.trim()) + 1) });
+  }
+  const cursor = lines[startLine].start + updatedEntry.length;
+  const newEntryStartLine = source.slice(0, lines[startLine].start).split('\n').length - 1 +
+    (entryPrefix + currentPayload + newline + newline).split('\n').length - 1;
+  if (!editor.applyDocumentEdit(changes, cursor)) return false;
+  // Match section navigation: flash the new number, timestamp, label and payload.
+  editor.flashLines(newEntryStartLine, newEntryStartLine + 3, SECTION_FLASH_MS);
+  return true;
+}
+
 editor.addEventListener("keydown", (event) => {
+
+  if (event.metaKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'a') {
+    event.preventDefault();
+    if (!event.repeat) splitEpicxSelection();
+    return;
+  }
 
   const isUndo =
   (event.metaKey || event.ctrlKey) &&
