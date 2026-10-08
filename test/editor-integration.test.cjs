@@ -203,6 +203,12 @@ const path = require('node:path');
     await page.locator('.toc-item').filter({ hasText: 'Chorus' }).click();
     await page.waitForTimeout(100);
     assert.equal(await page.evaluate(() => getEditorCaretLineIndex()), 12, 'Drawer uses logical lines despite wrapping');
+    await page.waitForFunction(() => {
+      const view = editor.view;
+      const section = view.coordsAtPos(view.state.selection.main.head);
+      const viewport = view.scrollDOM.getBoundingClientRect();
+      return section && Math.abs((section.top + section.bottom) / 2 - (viewport.top + viewport.bottom) / 2) < 25;
+    });
     assert.ok(await page.locator('.cm-epic-flash').count());
     const lyric = page.locator('.cm-line').filter({ hasText: '**Strong**' });
     assert.ok(await lyric.isVisible());

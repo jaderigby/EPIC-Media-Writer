@@ -335,7 +335,7 @@ export function create(parent) {
     },
     scrollToLine(index) {
       const line = view.state.doc.line(Math.max(1, Math.min(index + 1, view.state.doc.lines)));
-      view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: 40 }) });
+      view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
     },
     lineIndexAtClientY(clientY) {
       const rect = view.scrollDOM.getBoundingClientRect();
