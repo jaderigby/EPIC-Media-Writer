@@ -289,21 +289,19 @@ export function create(parent) {
       notifyInput('insertReplacementText');
     },
     capture() {
-      return { state: view.state, scrollTop: view.scrollDOM.scrollTop, scrollLeft: view.scrollDOM.scrollLeft };
+      // Flush pending viewport restoration before session persistence or another
+      // tab switch captures this document's scroll position.
+      view.lineBlockAtHeight(0);
+      return { state: view.state, scroll: view.scrollSnapshot(), scrollTop: view.scrollDOM.scrollTop, scrollLeft: view.scrollDOM.scrollLeft };
     },
     restore(snapshot) {
-      const version = ++documentVersion;
+      documentVersion++;
       clearTimeout(flashTimer);
       view.setState(snapshot.state);
-      view.dispatch({ effects: flashEffect.of(null) });
-      view.requestMeasure({
-        read: () => null,
-        write: () => {
-          if (version !== documentVersion) return;
-          view.scrollDOM.scrollTop = snapshot.scrollTop;
-          view.scrollDOM.scrollLeft = snapshot.scrollLeft;
-        }
-      });
+      // Let CodeMirror restore the viewport after measuring the new document.
+      // Direct scrollTop writes during measurement can be overwritten by its
+      // pending scroll anchoring from the previous tab.
+      view.dispatch({ effects: [flashEffect.of(null), snapshot.scroll] });
       notifyInput('insertReplacementText');
     },
     // Apply a document-level command as one CodeMirror history event.
