@@ -25,7 +25,6 @@ body.file-drop-active::after {
   background: #101a2bd9; color: white; font-size: 20px;
 }
 
-body:has(#fileTabList > .file-tab:nth-child(2)) #saveBtn { display: none !important; }
 #fileTabBar .file-tab-action { display: grid; place-items: center; width: 35px; flex: 0 0 35px; }
 #fileTabBar .file-tab-action .store-icon { margin: 0; fill: currentColor; }
 

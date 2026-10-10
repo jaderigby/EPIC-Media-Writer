@@ -1,6 +1,7 @@
 import { EditorState, EditorSelection, StateEffect, StateField, Compartment, Prec, Transaction } from '@codemirror/state';
 import { EditorView, Decoration, ViewPlugin, WidgetType, keymap, placeholder } from '@codemirror/view';
 import { history, historyKeymap, defaultKeymap, undo, redo, isolateHistory, selectLine } from '@codemirror/commands';
+import { normalizeEpicxPaste } from './epic-paste.mjs';
 import { epicSyntax, textChange } from './epic-syntax.mjs';
 
 // Keep the insertion policy in one place for future editor preferences.
@@ -221,7 +222,7 @@ export function create(parent) {
     });
   };
   const extensions = [
-    history(), syntax, flash, scrollTail, selectedSpaces, skipNotice, EditorView.lineWrapping,
+    normalizeEpicxPaste, history(), syntax, flash, scrollTail, selectedSpaces, skipNotice, EditorView.lineWrapping,
     // Follow typing (including wrapping, Enter, and paste) with breathing room
     // below the caret. Background/programmatic replacements retain their scroll.
     EditorState.transactionExtender.of(transaction => {

@@ -130,7 +130,6 @@ let studioTimingPollTimer = null;
 let isStudioTimingSyncInProgress = false;
 let transientStatusText = "";
 let statusObserver = null;
-let pendingAddedEpicxTimestamps = [];
 
 function getTocGroupKey(sectionIdentity) {
   const match = String(sectionIdentity || "").match(/^\[\s*([^{}\]]+)/);
@@ -1244,71 +1243,21 @@ function isEpicxTimestampLine(line) {
 }
 
 function timestampToMilliseconds(value) {
-  const parts = value.trim().split(":").map(Number);
-  const seconds = parts.pop();
-  const minutes = parts.pop();
-  const hours = parts.length ? parts.pop() : 0;
-  const [wholeSeconds, milliseconds] = String(seconds).split(".").map(Number);
+  const parts = value.trim().split(":");
+  const [wholeSeconds, milliseconds] = parts.pop().split(".").map(Number);
+  const minutes = Number(parts.pop());
+  const hours = Number(parts.pop() || 0);
   return (((hours * 60) + minutes) * 60 + wholeSeconds) * 1000 + milliseconds;
 }
 
 function millisecondsToTimestamp(milliseconds, original) {
-  const hasHours = original.trim().split(":").length === 3;
+  const hasHours = original.trim().split(":").length === 3 || milliseconds >= 3600000;
   const totalSeconds = Math.floor(milliseconds / 1000);
   const remainder = milliseconds % 1000;
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   const minutes = String(Math.floor(totalSeconds / 60) % 60).padStart(2, "0");
   const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
   return `${hasHours ? `${hours}:` : ""}${minutes}:${seconds}.${String(remainder).padStart(3, "0")}`;
-}
-
-function rememberAddedEpicxTimestamps(source, insertionStart, pastedText) {
-  const timestampPattern = /\d{2}:\d{2}(?::\d{2})?\.\d{3}/g;
-  const pastedTimestamps = [...pastedText.matchAll(timestampPattern)].map(match => match[0]);
-
-  pastedTimestamps.forEach((timestamp, index) => {
-    const occurrence = [...source.slice(0, insertionStart).matchAll(
-      new RegExp(timestamp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")
-    )].length + index;
-    pendingAddedEpicxTimestamps.push({ timestamp, occurrence });
-  });
-}
-
-function adjustPendingAddedEpicxTimestamps(source) {
-  if (pendingAddedEpicxTimestamps.length === 0) return source;
-
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const seen = new Map();
-  const timestampLines = [];
-
-  lines.forEach((line, index) => {
-    const match = line.match(/^(\s*)(\d{2}:\d{2}(?::\d{2})?\.\d{3})(\s*(?:-->.*)?\s*)$/);
-    if (!match) return;
-    const occurrence = seen.get(match[2]) || 0;
-    seen.set(match[2], occurrence + 1);
-    timestampLines.push({ index, timestamp: match[2], occurrence, match });
-  });
-
-  pendingAddedEpicxTimestamps.forEach(({ timestamp, occurrence }) => {
-    const target = timestampLines.find(item => item.timestamp === timestamp && item.occurrence === occurrence);
-    if (!target) return;
-
-    const previous = timestampLines
-      .filter(item => item.index < target.index)
-      .at(-1);
-    if (!previous) return;
-
-    const currentMs = timestampToMilliseconds(target.timestamp);
-    const previousMs = timestampToMilliseconds(previous.timestamp);
-    if (currentMs >= previousMs + 2000) return;
-
-    const adjusted = millisecondsToTimestamp(previousMs + 2000, target.timestamp);
-    lines[target.index] = `${target.match[1]}${adjusted}${target.match[3]}`;
-    target.timestamp = adjusted;
-  });
-
-  pendingAddedEpicxTimestamps = [];
-  return lines.join("\n");
 }
 
 function resyncEpicxEntryIndexes(source, entries) {
@@ -1358,8 +1307,7 @@ numericOrderingBtn?.addEventListener("click", lockFileOperation(async () => {
   }
 
   const entries = result.document.body?.entries || [];
-  const timestampAdjusted = adjustPendingAddedEpicxTimestamps(editor.value);
-  const normalized = resyncEpicxEntryIndexes(timestampAdjusted, entries);
+  const normalized = resyncEpicxEntryIndexes(editor.value, entries);
 
   if (normalized !== editor.value) {
     const selectionStart = editor.selectionStart;
@@ -2357,13 +2305,13 @@ editor.addEventListener("input", () => {
   rememberAuthorKeyCorrection();
 });
 
-// Split a selected payload span into a new EPICX entry (+2 seconds).
-// Only the selected characters move; no whitespace or punctuation inference.
-function splitEpicxSelection() {
+// Add an EPICX entry below the current entry (+2 seconds), either moving
+// selected payload text or inserting a start marker without changing the lyrics.
+function insertEpicxEntry({ startMarker = false } = {}) {
   const view = editor.view;
   if (view.state.selection.ranges.length !== 1) return false;
   const { from, to } = view.state.selection.main;
-  if (from === to) return false;
+  if (!startMarker && from === to) return false;
 
   const source = editor.value;
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
@@ -2381,7 +2329,7 @@ function splitEpicxSelection() {
   }
   const owner = starts.findIndex((lineIndex, index) => {
     const end = index + 1 < starts.length ? lines[starts[index + 1]].start : source.length;
-    return from >= lines[lineIndex].start && to <= end;
+    return from >= lines[lineIndex].start && to <= end && (from < end || end === source.length);
   });
   if (owner < 0) return false;
   const startLine = starts[owner];
@@ -2389,18 +2337,19 @@ function splitEpicxSelection() {
   const headerLine = lines[startLine + 2];
   if (!headerLine || !/^\s*\[[^\n]*\]\s*$/.test(headerLine.text)) return false;
   const payloadStart = headerLine.end + (source.slice(headerLine.end).startsWith('\r\n') ? 2 : 1);
-  if (from < payloadStart || to > nextStart || source.slice(from, to).includes('\n')) return false;
+  if (!startMarker && (from < payloadStart || to > nextStart || source.slice(from, to).includes('\n'))) return false;
   // Restrict selection to the payload, not the separator preceding another entry.
   const payloadEnd = source.slice(payloadStart, nextStart).replace(/(?:\r?\n)+$/, '').length + payloadStart;
-  if (to > payloadEnd) return false;
+  if (!startMarker && to > payloadEnd) return false;
   const originalTimestamp = lines[startLine + 1].text.trim();
   const timestampStart = originalTimestamp.split(/\s*-->\s*/)[0];
   const nextTimestamp = millisecondsToTimestamp(timestampToMilliseconds(timestampStart) + 2000, timestampStart);
-  const selected = source.slice(from, to);
+  const selected = startMarker ? '{{start}}' : source.slice(from, to);
   const originalNumber = Number(lines[startLine].text.trim());
-  const prefix = source.slice(0, from);
   const suffix = source.slice(to, nextStart);
-  const currentPayload = source.slice(payloadStart, from) + suffix.replace(/(?:\r?\n)+$/, '');
+  const currentPayload = startMarker
+    ? source.slice(payloadStart, payloadEnd)
+    : source.slice(payloadStart, from) + suffix.replace(/(?:\r?\n)+$/, '');
   const entryPrefix = source.slice(lines[startLine].start, payloadStart);
   const updatedEntry = entryPrefix + currentPayload + newline + newline +
     `${originalNumber + 1}${newline}${nextTimestamp}${newline}${headerLine.text}${newline}${selected}`;
@@ -2420,9 +2369,9 @@ function splitEpicxSelection() {
 
 editor.addEventListener("keydown", (event) => {
 
-  if (event.metaKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'a') {
+  if (event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey && ['a', 'd'].includes(event.key.toLowerCase())) {
     event.preventDefault();
-    if (!event.repeat) splitEpicxSelection();
+    if (!event.repeat) insertEpicxEntry({ startMarker: event.key.toLowerCase() === 'd' });
     return;
   }
 
@@ -2906,12 +2855,6 @@ addAlbumArtBtn?.addEventListener("click", () => {
 window.epicMenuSave = (options = {}) => performSave({ saveAs: Boolean(options.saveAs) });
 
 editor.addEventListener("click", maybeShowAuthorKeyPicker);
-editor.addEventListener("paste", (event) => {
-  const text = event.clipboardData?.getData("text/plain");
-  if (text && editor.selectionStart === editor.selectionEnd) {
-    rememberAddedEpicxTimestamps(editor.value, editor.selectionStart, text);
-  }
-});
 
 // In .epicx, an entry's number and timestamp sit on the two lines above its
 // [Section] label. Returns the first line of that entry (or the label line).

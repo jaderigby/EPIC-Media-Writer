@@ -179,20 +179,50 @@ const path = require('node:path');
     await page.keyboard.press(`${shortcut}+Shift+Semicolon`);
     assert.equal(await read(), '[{&}]\n:::\n');
 
-    // Paste is observed before insertion, preserving the duplicate-timestamp index.
+    // Start entries inherit the current section and leave selected lyrics intact.
+    const startSource = '1\n00:59.100\n[Verse {{open}}]\nKeep these words\n\n2\n01:10.000\n[Chorus]\nNext';
+    const startExpected = '1\n00:59.100\n[Verse {{open}}]\nKeep these words\n\n2\n01:01.100\n[Verse {{open}}]\n{{start}}\n\n3\n01:10.000\n[Chorus]\nNext';
+    await load(startSource);
+    await page.evaluate(() => { editor.focus(); const at = editor.value.indexOf('these'); editor.setSelectionRange(at, at + 5); });
+    await page.keyboard.press('Meta+Shift+d');
+    assert.equal(await read(), startExpected, 'Start entry preserves lyrics, section instructions, milliseconds and later timing');
+    assert.equal(await page.evaluate(() => editor.selectionStart), startExpected.indexOf('{{start}}') + 9, 'Caret follows the start marker');
+    await page.keyboard.press('Meta+z');
+    assert.equal(await read(), startSource, 'One undo removes the entry and restores numbering');
+    await page.keyboard.press('Meta+Shift+z');
+    assert.equal(await read(), startExpected, 'Redo restores the complete entry');
+    await page.evaluate(() => editor.setSelectionRange(editor.value.indexOf('{{start}}') + 9));
+    await page.keyboard.press('Meta+Shift+d');
+    assert.ok((await read()).includes('3\n01:03.100\n[Verse {{open}}]\n{{start}}'), 'Repeated shortcut follows the newly inserted entry: ' + await read());
+    for (const [time, expected] of [['00:01.000', '00:03.000'], ['00:59:59.250', '01:00:01.250'], ['59:59.000', '01:00:01.000']]) {
+      await load('1\n' + time + '\n[Verse]\nWords');
+      await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
+      await page.keyboard.press('Meta+Shift+d');
+      assert.ok((await read()).endsWith('2\n' + expected + '\n[Verse]\n{{start}}'), 'Caret-only insertion handles whole seconds and hour rollover');
+    }
+    await load('[Verse]\nPlain lyrics');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
+    await page.keyboard.press('Meta+Shift+d');
+    assert.equal(await read(), '[Verse]\nPlain lyrics', 'Untimed text stays unchanged');
+    await load(startSource);
+    await page.evaluate(() => { editor.focus(); const at = editor.value.indexOf('these'); editor.setSelectionRange(at, at + 5); });
+    await page.keyboard.press('Meta+Shift+a');
+    assert.equal(await read(), startExpected.replace('Keep these words', 'Keep  words').replace('{{start}}', 'these'), 'The existing selection shortcut still moves only selected text');
+
+    // Paste corrects numbering and timing in the same undoable edit.
     await load('1\n00:01.000\n[Verse]\nLyric\n\n');
     await page.evaluate(() => {
-      pendingAddedEpicxTimestamps = [];
       editor.focus(); editor.setSelectionRange(editor.value.length);
-      const data = new DataTransfer(); data.setData('text/plain', '2\n00:01.000\n[Chorus]\nPasted');
+      const data = new DataTransfer(); data.setData('text/plain', '1\n00:01.000\n[Chorus]\nPasted');
       editor.view.contentDOM.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
     });
     assert.ok((await read()).endsWith('[Chorus]\nPasted'));
-    assert.deepEqual(await page.evaluate(() => pendingAddedEpicxTimestamps), [{ timestamp: '00:01.000', occurrence: 1 }]);
+    assert.equal(await read(), '1\n00:01.000\n[Verse]\nLyric\n\n2\n00:03.000\n[Chorus]\nPasted');
     await page.keyboard.press(`${shortcut}+z`);
     assert.ok(!(await read()).includes('Pasted'), 'Paste is undoable');
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('editor-history:action', 'redo'));
     await page.waitForFunction(() => editor.value.includes('Pasted'));
+    assert.ok((await read()).includes('2\n00:03.000'), 'Redo restores the corrected paste');
 
     const song = '---\nTitle: Test\nAuthor: Writer\n---\n\n1\n00:01.000\n[Verse {{open}}]\n' + 'A wrapped lyric line '.repeat(90) + '\n\n2\n00:02.000\n[Chorus {{energetic}}]\n**Strong** and *soft*, `code`, [link](https://example.com)\n';
     await load(song);
