@@ -836,12 +836,20 @@ function unlinkStudioTiming({ silent = false } = {}) {
 }
 
 async function refreshEpicValidationResult() {
+  if (/\.(md|markdown)$/i.test(currentFilePath || "")) {
+    lastEpicValidationResult = null;
+    validationStatusEl.textContent = "";
+    updateNumericOrderingButton(null);
+    return null;
+  }
   if (!window.EpicInspector?.parseEpic) return null;
+  const source = editor.value;
+  const filePath = currentFilePath;
+  const epoch = fileTabEpoch;
 
-  const result = await window.EpicInspector.parseEpic({
-    source: editor.value
-  });
+  const result = await parseEpicStructure(source);
 
+  if (epoch !== fileTabEpoch || currentFilePath !== filePath || editor.value !== source) return null;
   lastEpicValidationResult = result;
   updateNumericOrderingButton(result);
   return result;
@@ -1174,20 +1182,85 @@ function replaceEditorText(nextText) {
   editor.value = nextText;
 }
 
+function getEpicStructuralLines(source) {
+  let codeFence = null;
+  return String(source || "").split("\n").map(line => {
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})([^\n]*)$/);
+    if (codeFence) {
+      if (fence && fence[1][0] === codeFence.character &&
+          fence[1].length >= codeFence.length && !fence[2].trim()) {
+        codeFence = null;
+      }
+      return null;
+    }
+    if (fence && (fence[1][0] !== "`" || !fence[2].includes("`"))) {
+      codeFence = { character: fence[1][0], length: fence[1].length };
+      return null;
+    }
+    return line;
+  });
+}
+
+function getEpicStructuralSource(source) {
+  return getEpicStructuralLines(source).map(line => line ?? "").join("\n");
+}
+
+async function parseEpicStructure(source) {
+  const lines = getEpicStructuralLines(source);
+  const kept = [];
+  const originalLines = [];
+  let crossedFence = false;
+  lines.forEach((line, index) => {
+    if (line === null) {
+      crossedFence = true;
+      return;
+    }
+    // A removed example and its surrounding blank lines form one separator.
+    if (crossedFence && !line.trim() && kept.length && !kept[kept.length - 1].trim()) return;
+    crossedFence = false;
+    kept.push(line);
+    originalLines.push(index + 1);
+  });
+  const result = await window.EpicInspector.parseEpic({ source: kept.join("\n") });
+  // Restore source locations so errors and reordering still target editor lines.
+  const visited = new WeakSet();
+  function restoreLocations(value) {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    for (const [key, child] of Object.entries(value)) {
+      if (["line", "startLine", "endLine"].includes(key) && Number.isInteger(child) && child > 0) {
+        value[key] = originalLines[child - 1] ?? lines.length + 1;
+      } else {
+        restoreLocations(child);
+      }
+    }
+  }
+  restoreLocations(result);
+  return result;
+}
+
 function scheduleEpicValidation() {
   clearTimeout(parseTimer);
+
+  // Markdown code examples are not EPIC section labels or headers.
+  if (/\.(md|markdown)$/i.test(currentFilePath || "")) {
+    lastEpicValidationResult = null;
+    validationStatusEl.textContent = "";
+    updateNumericOrderingButton(null);
+    saveSessionState();
+    return;
+  }
 
   parseTimer = setTimeout(async () => {
     if (!window.EpicInspector?.parseEpic) return;
 
     const epoch = fileTabEpoch;
+    const filePath = currentFilePath;
     const source = editor.value;
     try {
-      const result = await window.EpicInspector.parseEpic({
-        source
-      });
+      const result = await parseEpicStructure(source);
 
-      if (epoch !== fileTabEpoch || editor.value !== source) return;
+      if (epoch !== fileTabEpoch || currentFilePath !== filePath || editor.value !== source) return;
       lastEpicValidationResult = result;
       updateNumericOrderingButton(result);
 
@@ -1212,7 +1285,7 @@ function scheduleEpicValidation() {
         saveSessionState();
       }
     } catch (err) {
-      if (epoch !== fileTabEpoch || editor.value !== source) return;
+      if (epoch !== fileTabEpoch || currentFilePath !== filePath || editor.value !== source) return;
       validationStatusEl.textContent =
         `Parser failed:\n${err.message || err}`;
       
@@ -1285,9 +1358,8 @@ function resyncEpicxEntryIndexes(source, entries) {
     }
   }
 
-  return lines
-    .join("\n")
-    .replace(/\n{3,}(?=\d+\n\d{2}:\d{2}(?::\d{2})?\.\d{3})/g, "\n\n");
+  // Preserve whitespace in examples and all other unrelated source text.
+  return lines.join("\n");
 }
 
 numericOrderingBtn?.addEventListener("mousedown", (event) => {
@@ -1295,11 +1367,7 @@ numericOrderingBtn?.addEventListener("mousedown", (event) => {
 });
 
 numericOrderingBtn?.addEventListener("click", lockFileOperation(async () => {
-  if (!window.EpicInspector?.parseEpic) return;
-
-  const result = await window.EpicInspector.parseEpic({
-    source: editor.value
-  });
+  const result = await refreshEpicValidationResult();
 
   if (!result?.document || result.document.format !== "epicx") {
     numericOrderingBtn.style.display = "none";
@@ -1812,9 +1880,8 @@ function escapeHtml(value) {
 }
 
 function getSectionTocEntries(source) {
-  const lines = String(source || "").split("\n");
+  const lines = getEpicStructuralSource(source).split("\n");
   const entries = [];
-
   let previousSectionIdentity = "";
 
   lines.forEach((line, index) => {
@@ -2762,6 +2829,7 @@ async function performSave({ saveAs = false } = {}) {
       }
 
       currentFilePath = result.filePath;
+      scheduleEpicValidation();
       sourceEditorText = submittedText;
       sourceHadContent = submittedText.trim().length > 0;
 
@@ -2792,6 +2860,7 @@ async function performSave({ saveAs = false } = {}) {
       if (!result) return;
 
       currentFilePath = result.filePath;
+      scheduleEpicValidation();
       sourceEditorText = submittedText;
       sourceHadContent =
         submittedText.trim().length > 0;

@@ -775,6 +775,26 @@ ipcMain.handle("store-in-audio", async (event, payload) => {
   };
 });
 
+function getSuggestedTextFilename(text) {
+  const lines = String(text || "").replace(/^\uFEFF/, "").trimStart().split(/\r?\n/);
+  // Read the document header, rather than a Title field in a body example.
+  const headerStart = lines[0]?.trim() === "---" ? 1 : 0;
+  let title = "";
+  for (const line of lines.slice(headerStart)) {
+    if (line.trim() === "---" || /^\s*\[/.test(line) || /^\s*(`{3,}|~{3,})/.test(line)) break;
+    const match = line.match(/^Title:[ \t]*(.*)$/i);
+    if (match) {
+      title = match[1].trim();
+      break;
+    }
+  }
+  const filename = title
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  return `${filename || "Untitled"}.epic`;
+}
+
 ipcMain.handle("save-text-as", async (event, payload) => {
   // For "Save As" the renderer passes the current file so the dialog opens
   // next to it with its name and type preselected.
@@ -795,7 +815,7 @@ ipcMain.handle("save-text-as", async (event, payload) => {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showSaveDialog(parentWindow, {
     title: requestedPath ? "Save EPIC File As" : "Save EPIC File",
-    defaultPath: requestedPath || "Untitled.epic",
+    defaultPath: requestedPath || getSuggestedTextFilename(payload?.text),
     filters
   });
 
