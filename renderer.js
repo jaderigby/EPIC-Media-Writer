@@ -99,6 +99,7 @@ async function saveLinkedStudioProject() {
     if (currentMetadata) currentMetadata.epicx = sourceEditorText;
     statusEl.textContent = merged.ok ? 'Project saved in Studio.' : merged.message;
     scheduleEpicValidation(); updateHeaderState(); saveSessionState();
+    return merged.ok;
   } finally { isProjectSaveInProgress = false; }
 }
 
@@ -129,7 +130,6 @@ let studioTimingPollTimer = null;
 let isStudioTimingSyncInProgress = false;
 let transientStatusText = "";
 let statusObserver = null;
-let pendingAddedEpicxTimestamps = [];
 
 function getTocGroupKey(sectionIdentity) {
   const match = String(sectionIdentity || "").match(/^\[\s*([^{}\]]+)/);
@@ -568,13 +568,19 @@ function showConfirmModal({
   title = "Confirm",
   message,
   confirmLabel = "Yes",
-  cancelLabel = "Cancel"
+  cancelLabel = "Cancel",
+  alternateLabel = null
 }) {
   const modal = document.getElementById("confirmModal");
   const titleEl = document.getElementById("confirmModalTitle");
   const messageEl = document.getElementById("confirmModalMessage");
   const yesBtn = document.getElementById("confirmModalYesBtn");
   const cancelBtn = document.getElementById("confirmModalCancelBtn");
+  const alternateBtn = document.createElement('button');
+  if (alternateLabel) {
+    alternateBtn.textContent = alternateLabel;
+    yesBtn.after(alternateBtn);
+  }
 
   return new Promise((resolve) => {
     titleEl.textContent = title;
@@ -590,11 +596,13 @@ function showConfirmModal({
       cancelBtn.removeEventListener("click", onCancel);
       modal.removeEventListener("click", onBackdrop);
       window.removeEventListener("keydown", onKeydown);
+      alternateBtn.remove();
       resolve(value);
     };
 
     const onYes = () => close(true);
     const onCancel = () => close(false);
+    alternateBtn.addEventListener('click', () => close('alternate'));
 
     const onBackdrop = (event) => {
       if (event.target === modal) close(false);
@@ -602,7 +610,7 @@ function showConfirmModal({
 
     const onKeydown = (event) => {
       if (event.key === "Escape") close(false);
-      if (event.key === "Enter") close(true);
+      if (event.key === "Enter") close(alternateLabel ? 'alternate' : true);
     };
 
     yesBtn.addEventListener("click", onYes);
@@ -787,6 +795,7 @@ function updateHeaderState() {
   
   updateSidebarState();
   updateStudioTimingMenuState();
+  renderFileTabs();
 }
 
 function getDisplayName(filePath) {
@@ -803,6 +812,10 @@ function updateStudioTimingMenuState() {
     renderStatus();
   }
 
+  const hasStudioLinkedTab = fileTabs.some(tab =>
+    Boolean(tab.id === activeFileTabId ? studioTimingLink : tab.studioTimingLink));
+  document.getElementById('studioTimingLinkButton').hidden = !hasStudioLinkedTab;
+  renderFileTabs();
   window.EpicInspector?.updateStudioTimingMenuState?.({
     available: isAvailable,
     linked: Boolean(studioTimingLink),
@@ -823,12 +836,20 @@ function unlinkStudioTiming({ silent = false } = {}) {
 }
 
 async function refreshEpicValidationResult() {
+  if (/\.(md|markdown)$/i.test(currentFilePath || "")) {
+    lastEpicValidationResult = null;
+    validationStatusEl.textContent = "";
+    updateNumericOrderingButton(null);
+    return null;
+  }
   if (!window.EpicInspector?.parseEpic) return null;
+  const source = editor.value;
+  const filePath = currentFilePath;
+  const epoch = fileTabEpoch;
 
-  const result = await window.EpicInspector.parseEpic({
-    source: editor.value
-  });
+  const result = await parseEpicStructure(source);
 
+  if (epoch !== fileTabEpoch || currentFilePath !== filePath || editor.value !== source) return null;
   lastEpicValidationResult = result;
   updateNumericOrderingButton(result);
   return result;
@@ -1154,141 +1175,92 @@ function handleStudioTimingMenuAction() {
   linkStudioTiming();
 }
 
-function saveSessionState() {
-  if (restoreInProgress) return;
-
-  const state = {
-    currentFilePath,
-    currentMetadata,
-    editorText: editor.value,
-    statusText: stripPinnedStatusText(statusEl.textContent),
-    validationText: validationStatusEl.textContent,
-    sourceEditorText,
-    linkedAudioPath,
-    studioTimingLink,
-    sourceHadContent,
-    rawMetadataOpen,
-    savedAt: new Date().toISOString()
-  };
-
-  localStorage.setItem(SESSION_KEY, JSON.stringify(state));
-}
-
-function restoreSessionState() {
-  const raw = localStorage.getItem(SESSION_KEY);
-  
-  if (!raw) return;
-
-  try {
-    restoreInProgress = true;
-
-    const state = JSON.parse(raw);
-    linkedAudioPath = state.linkedAudioPath || "";
-    studioTimingLink = state.studioTimingLink || null;
-
-    sourceHadContent = Boolean(state.sourceHadContent);
-    rawMetadataOpen = Boolean(state.rawMetadataOpen);
-
-    sourceEditorText = state.sourceEditorText || editor.value;
-
-    currentMetadata = state.currentMetadata || null;
-
-    currentFilePath = state.currentFilePath || "";
-    editor.load(state.editorText || "");
-    refreshEditorView();
-
-    filePathEl.textContent =
-      currentFilePath
-        ? getDisplayName(currentFilePath)
-        : "Unsaved EPIC session";
-
-    setStatus(state.statusText || "Restored session.");
-
-    validationStatusEl.textContent =
-      state.validationText || "";
-
-    saveBtn.disabled = false;
-
-    if (currentMetadata) {
-      renderMetadata(currentMetadata);
-      editMetadataBtn.disabled = false;
-    } else {
-      metadataPanel.textContent = "";
-      clearMetadataHeaderTabs();
-      editMetadataBtn.disabled = true;
-    }
-
-    if (editor.value.trim()) {
-      scheduleEpicValidation();
-    }
-    updateHeaderState();
-    updateStudioTimingMenuState();
-
-    if (studioTimingLink && canLinkStudioTiming()) {
-      startStudioTimingPolling();
-    }
-  } catch (err) {
-    console.warn("Failed to restore session:", err);
-  } finally {
-    restoreInProgress = false;
-  }
-}
-
-function resetSession() {
-  switchEmotiveRecipeSong("");
-  currentFilePath = "";
-  currentMetadata = null;
-  metadataEditMode = false;
-  rawMetadataOpen = false;
-
-  editor.load("");
-  refreshEditorView();
-
-  sourceEditorText = "";
-  sourceHadContent = false;
-
-  filePathEl.textContent = "No file loaded";
-
-  linkedAudioPath = "";
-  studioTimingLink = null;
-  stopStudioTimingPolling();
-
-  setStatus("");
-
-  validationStatusEl.textContent = "";
-
-  metadataPanel.textContent = "";
-  clearMetadataHeaderTabs();
-
-  saveBtn.disabled = true;
-
-  editMetadataBtn.disabled = true;
-
-  setEditMetadataBtnIcon(false);
-  editMetadataBtn.title = "Edit metadata";
-  updateNumericOrderingButton(null);
-
-  localStorage.removeItem(SESSION_KEY);
-  updateHeaderState();
-  updateStudioTimingMenuState();
-  showGhostHeaderIfAppropriate();
-}
+function saveSessionState() { persistFileTabs(); }
+function restoreSessionState() { restoreFileTabs(); }
 
 function replaceEditorText(nextText) {
   editor.value = nextText;
 }
 
+function getEpicStructuralLines(source) {
+  let codeFence = null;
+  return String(source || "").split("\n").map(line => {
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})([^\n]*)$/);
+    if (codeFence) {
+      if (fence && fence[1][0] === codeFence.character &&
+          fence[1].length >= codeFence.length && !fence[2].trim()) {
+        codeFence = null;
+      }
+      return null;
+    }
+    if (fence && (fence[1][0] !== "`" || !fence[2].includes("`"))) {
+      codeFence = { character: fence[1][0], length: fence[1].length };
+      return null;
+    }
+    return line;
+  });
+}
+
+function getEpicStructuralSource(source) {
+  return getEpicStructuralLines(source).map(line => line ?? "").join("\n");
+}
+
+async function parseEpicStructure(source) {
+  const lines = getEpicStructuralLines(source);
+  const kept = [];
+  const originalLines = [];
+  let crossedFence = false;
+  lines.forEach((line, index) => {
+    if (line === null) {
+      crossedFence = true;
+      return;
+    }
+    // A removed example and its surrounding blank lines form one separator.
+    if (crossedFence && !line.trim() && kept.length && !kept[kept.length - 1].trim()) return;
+    crossedFence = false;
+    kept.push(line);
+    originalLines.push(index + 1);
+  });
+  const result = await window.EpicInspector.parseEpic({ source: kept.join("\n") });
+  // Restore source locations so errors and reordering still target editor lines.
+  const visited = new WeakSet();
+  function restoreLocations(value) {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    for (const [key, child] of Object.entries(value)) {
+      if (["line", "startLine", "endLine"].includes(key) && Number.isInteger(child) && child > 0) {
+        value[key] = originalLines[child - 1] ?? lines.length + 1;
+      } else {
+        restoreLocations(child);
+      }
+    }
+  }
+  restoreLocations(result);
+  return result;
+}
+
 function scheduleEpicValidation() {
   clearTimeout(parseTimer);
+
+  // Markdown code examples are not EPIC section labels or headers.
+  if (/\.(md|markdown)$/i.test(currentFilePath || "")) {
+    lastEpicValidationResult = null;
+    validationStatusEl.textContent = "";
+    updateNumericOrderingButton(null);
+    saveSessionState();
+    return;
+  }
 
   parseTimer = setTimeout(async () => {
     if (!window.EpicInspector?.parseEpic) return;
 
+    const epoch = fileTabEpoch;
+    const filePath = currentFilePath;
+    const source = editor.value;
     try {
-      const result = await window.EpicInspector.parseEpic({
-        source: editor.value
-      });
+      const result = await parseEpicStructure(source);
 
+      if (epoch !== fileTabEpoch || currentFilePath !== filePath || editor.value !== source) return;
       lastEpicValidationResult = result;
       updateNumericOrderingButton(result);
 
@@ -1313,6 +1285,7 @@ function scheduleEpicValidation() {
         saveSessionState();
       }
     } catch (err) {
+      if (epoch !== fileTabEpoch || currentFilePath !== filePath || editor.value !== source) return;
       validationStatusEl.textContent =
         `Parser failed:\n${err.message || err}`;
       
@@ -1343,71 +1316,21 @@ function isEpicxTimestampLine(line) {
 }
 
 function timestampToMilliseconds(value) {
-  const parts = value.trim().split(":").map(Number);
-  const seconds = parts.pop();
-  const minutes = parts.pop();
-  const hours = parts.length ? parts.pop() : 0;
-  const [wholeSeconds, milliseconds] = String(seconds).split(".").map(Number);
+  const parts = value.trim().split(":");
+  const [wholeSeconds, milliseconds] = parts.pop().split(".").map(Number);
+  const minutes = Number(parts.pop());
+  const hours = Number(parts.pop() || 0);
   return (((hours * 60) + minutes) * 60 + wholeSeconds) * 1000 + milliseconds;
 }
 
 function millisecondsToTimestamp(milliseconds, original) {
-  const hasHours = original.trim().split(":").length === 3;
+  const hasHours = original.trim().split(":").length === 3 || milliseconds >= 3600000;
   const totalSeconds = Math.floor(milliseconds / 1000);
   const remainder = milliseconds % 1000;
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   const minutes = String(Math.floor(totalSeconds / 60) % 60).padStart(2, "0");
   const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
   return `${hasHours ? `${hours}:` : ""}${minutes}:${seconds}.${String(remainder).padStart(3, "0")}`;
-}
-
-function rememberAddedEpicxTimestamps(source, insertionStart, pastedText) {
-  const timestampPattern = /\d{2}:\d{2}(?::\d{2})?\.\d{3}/g;
-  const pastedTimestamps = [...pastedText.matchAll(timestampPattern)].map(match => match[0]);
-
-  pastedTimestamps.forEach((timestamp, index) => {
-    const occurrence = [...source.slice(0, insertionStart).matchAll(
-      new RegExp(timestamp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")
-    )].length + index;
-    pendingAddedEpicxTimestamps.push({ timestamp, occurrence });
-  });
-}
-
-function adjustPendingAddedEpicxTimestamps(source) {
-  if (pendingAddedEpicxTimestamps.length === 0) return source;
-
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const seen = new Map();
-  const timestampLines = [];
-
-  lines.forEach((line, index) => {
-    const match = line.match(/^(\s*)(\d{2}:\d{2}(?::\d{2})?\.\d{3})(\s*(?:-->.*)?\s*)$/);
-    if (!match) return;
-    const occurrence = seen.get(match[2]) || 0;
-    seen.set(match[2], occurrence + 1);
-    timestampLines.push({ index, timestamp: match[2], occurrence, match });
-  });
-
-  pendingAddedEpicxTimestamps.forEach(({ timestamp, occurrence }) => {
-    const target = timestampLines.find(item => item.timestamp === timestamp && item.occurrence === occurrence);
-    if (!target) return;
-
-    const previous = timestampLines
-      .filter(item => item.index < target.index)
-      .at(-1);
-    if (!previous) return;
-
-    const currentMs = timestampToMilliseconds(target.timestamp);
-    const previousMs = timestampToMilliseconds(previous.timestamp);
-    if (currentMs >= previousMs + 2000) return;
-
-    const adjusted = millisecondsToTimestamp(previousMs + 2000, target.timestamp);
-    lines[target.index] = `${target.match[1]}${adjusted}${target.match[3]}`;
-    target.timestamp = adjusted;
-  });
-
-  pendingAddedEpicxTimestamps = [];
-  return lines.join("\n");
 }
 
 function resyncEpicxEntryIndexes(source, entries) {
@@ -1435,21 +1358,16 @@ function resyncEpicxEntryIndexes(source, entries) {
     }
   }
 
-  return lines
-    .join("\n")
-    .replace(/\n{3,}(?=\d+\n\d{2}:\d{2}(?::\d{2})?\.\d{3})/g, "\n\n");
+  // Preserve whitespace in examples and all other unrelated source text.
+  return lines.join("\n");
 }
 
 numericOrderingBtn?.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
-numericOrderingBtn?.addEventListener("click", async () => {
-  if (!window.EpicInspector?.parseEpic) return;
-
-  const result = await window.EpicInspector.parseEpic({
-    source: editor.value
-  });
+numericOrderingBtn?.addEventListener("click", lockFileOperation(async () => {
+  const result = await refreshEpicValidationResult();
 
   if (!result?.document || result.document.format !== "epicx") {
     numericOrderingBtn.style.display = "none";
@@ -1457,8 +1375,7 @@ numericOrderingBtn?.addEventListener("click", async () => {
   }
 
   const entries = result.document.body?.entries || [];
-  const timestampAdjusted = adjustPendingAddedEpicxTimestamps(editor.value);
-  const normalized = resyncEpicxEntryIndexes(timestampAdjusted, entries);
+  const normalized = resyncEpicxEntryIndexes(editor.value, entries);
 
   if (normalized !== editor.value) {
     const selectionStart = editor.selectionStart;
@@ -1486,7 +1403,7 @@ numericOrderingBtn?.addEventListener("click", async () => {
     updateHeaderState();
     saveSessionState();
   }
-});
+}));
 
 function formatParseIssue(issue) {
   if (typeof issue === "string") return issue;
@@ -1928,9 +1845,11 @@ function renderMetadataEditForm(metadata) {
   renderMetadata(metadata);
 }
 
-clearSessionBtn?.addEventListener("click", async () => {
-  if (!(await confirmDiscardUnsavedChanges())) return;
-  resetSession();
+clearSessionBtn?.addEventListener("click", () => closeFileTab(activeFileTabId));
+document.getElementById('studioTimingLinkButton').addEventListener('click', () => {
+  const linkedTab = fileTabs.find(tab => tab.id === activeFileTabId && studioTimingLink)
+    || fileTabs.find(tab => tab.id !== activeFileTabId && tab.studioTimingLink);
+  if (linkedTab) activateFileTab(linkedTab.id);
 });
 
 editMetadataBtn?.addEventListener("click", () => {
@@ -1961,9 +1880,8 @@ function escapeHtml(value) {
 }
 
 function getSectionTocEntries(source) {
-  const lines = String(source || "").split("\n");
+  const lines = getEpicStructuralSource(source).split("\n");
   const entries = [];
-
   let previousSectionIdentity = "";
 
   lines.forEach((line, index) => {
@@ -2454,7 +2372,75 @@ editor.addEventListener("input", () => {
   rememberAuthorKeyCorrection();
 });
 
+// Add an EPICX entry below the current entry (+2 seconds), either moving
+// selected payload text or inserting a start marker without changing the lyrics.
+function insertEpicxEntry({ startMarker = false } = {}) {
+  const view = editor.view;
+  if (view.state.selection.ranges.length !== 1) return false;
+  const { from, to } = view.state.selection.main;
+  if (!startMarker && from === to) return false;
+
+  const source = editor.value;
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const lines = [];
+  const linePattern = /[^\n]*(?:\n|$)/g;
+  for (const match of source.matchAll(linePattern)) {
+    if (!match[0]) continue;
+    const raw = match[0];
+    lines.push({ start: match.index, end: match.index + raw.replace(/\r?\n$/, '').length,
+      text: raw.replace(/\r?\n$/, '') });
+  }
+  const starts = [];
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (/^\s*\d+\s*$/.test(lines[i].text) && isEpicxTimestampLine(lines[i + 1].text)) starts.push(i);
+  }
+  const owner = starts.findIndex((lineIndex, index) => {
+    const end = index + 1 < starts.length ? lines[starts[index + 1]].start : source.length;
+    return from >= lines[lineIndex].start && to <= end && (from < end || end === source.length);
+  });
+  if (owner < 0) return false;
+  const startLine = starts[owner];
+  const nextStart = owner + 1 < starts.length ? lines[starts[owner + 1]].start : source.length;
+  const headerLine = lines[startLine + 2];
+  if (!headerLine || !/^\s*\[[^\n]*\]\s*$/.test(headerLine.text)) return false;
+  const payloadStart = headerLine.end + (source.slice(headerLine.end).startsWith('\r\n') ? 2 : 1);
+  if (!startMarker && (from < payloadStart || to > nextStart || source.slice(from, to).includes('\n'))) return false;
+  // Restrict selection to the payload, not the separator preceding another entry.
+  const payloadEnd = source.slice(payloadStart, nextStart).replace(/(?:\r?\n)+$/, '').length + payloadStart;
+  if (!startMarker && to > payloadEnd) return false;
+  const originalTimestamp = lines[startLine + 1].text.trim();
+  const timestampStart = originalTimestamp.split(/\s*-->\s*/)[0];
+  const nextTimestamp = millisecondsToTimestamp(timestampToMilliseconds(timestampStart) + 2000, timestampStart);
+  const selected = startMarker ? '{{start}}' : source.slice(from, to);
+  const originalNumber = Number(lines[startLine].text.trim());
+  const suffix = source.slice(to, nextStart);
+  const currentPayload = startMarker
+    ? source.slice(payloadStart, payloadEnd)
+    : source.slice(payloadStart, from) + suffix.replace(/(?:\r?\n)+$/, '');
+  const entryPrefix = source.slice(lines[startLine].start, payloadStart);
+  const updatedEntry = entryPrefix + currentPayload + newline + newline +
+    `${originalNumber + 1}${newline}${nextTimestamp}${newline}${headerLine.text}${newline}${selected}`;
+  const changes = [{ from: lines[startLine].start, to: nextStart, insert: updatedEntry + (nextStart < source.length ? newline + newline : '') }];
+  for (let i = owner + 1; i < starts.length; i++) {
+    const line = lines[starts[i]];
+    changes.push({ from: line.start, to: line.end, insert: String(Number(line.text.trim()) + 1) });
+  }
+  const cursor = lines[startLine].start + updatedEntry.length;
+  const newEntryStartLine = source.slice(0, lines[startLine].start).split('\n').length - 1 +
+    (entryPrefix + currentPayload + newline + newline).split('\n').length - 1;
+  if (!editor.applyDocumentEdit(changes, cursor)) return false;
+  // Match section navigation: flash the new number, timestamp, label and payload.
+  editor.flashLines(newEntryStartLine, newEntryStartLine + 3, SECTION_FLASH_MS);
+  return true;
+}
+
 editor.addEventListener("keydown", (event) => {
+
+  if (event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey && ['a', 'd'].includes(event.key.toLowerCase())) {
+    event.preventDefault();
+    if (!event.repeat) insertEpicxEntry({ startMarker: event.key.toLowerCase() === 'd' });
+    return;
+  }
 
   const isUndo =
   (event.metaKey || event.ctrlKey) &&
@@ -2525,87 +2511,57 @@ editor.addEventListener("keydown", (event) => {
   }
 });
 
-openBtn.addEventListener("click", async () => {
-  try {
-    if (!(await confirmDiscardUnsavedChanges())) return;
-
-    const result = await window.EpicInspector.openMedia();
-
-    if (!result) return;
-
-
-    resetSession();
-    switchEmotiveRecipeSong(result.filePath || "");
-
-    if (result.filePath) {
-      currentFilePath = result.filePath;
-    }
-
-    if (result.kind === "text") {
-      editor.load(result.text || "");
-      refreshEditorView();
-
-      sourceEditorText = editor.value;
-      sourceHadContent =
-        editor.value.trim().length > 0;
-
-      currentMetadata = null;
-      metadataEditMode = false;
-
-      metadataPanel.textContent = "";
-      clearMetadataHeaderTabs();
-      editMetadataBtn.disabled = true;
-      setEditMetadataBtnIcon(false);
-      editMetadataBtn.title = "Edit metadata";
-
-      filePathEl.textContent = getDisplayName(currentFilePath);
-      saveBtn.disabled = false;
-
-      statusEl.textContent = "Loaded EPIC text file.";
-
-      scheduleEpicValidation();
+function openResultInTab(result) {
+    const existing = fileTabs.find(tab => tab.currentFilePath === result.filePath);
+    if (existing) {
+      captureActiveFileTab();
+      applyFileTab(existing);
       saveSessionState();
-      updateHeaderState();
-
       return;
     }
+    const text = result.kind === 'text' ? result.text || '' : result.epicx || '';
+    addFileTab({
+      ...blankFileTab(), currentFilePath: result.filePath || '', editorText: text,
+      sourceEditorText: text, sourceHadContent: !!text.trim(),
+      currentMetadata: result.kind === 'text' ? null : result.metadata,
+      statusText: result.kind === 'text' ? 'Loaded EPIC text file.' : 'Loaded media'
+    });
+}
 
-    editor.load(result.epicx || "");
-    refreshEditorView();
-    
-    sourceEditorText = editor.value;
-    sourceHadContent =
-      sourceEditorText.trim().length > 0;
-
-    scheduleEpicValidation();
-    renderMetadata(result.metadata);
-
-    currentMetadata = result.metadata;
-    metadataEditMode = false;
-
-    setEditMetadataBtnIcon(false);
-    editMetadataBtn.title = "Edit metadata";
-    editMetadataBtn.disabled = false;
-
-    filePathEl.textContent = getDisplayName(currentFilePath);
-    saveBtn.disabled = false;
-
-    if (result.epicx) {
-      statusEl.textContent =
-        `Loaded media\n` +
-        `EPIC size: ${result.epicx.length} chars`;
-    } else {
-      statusEl.textContent = "Loaded media";
-    }
-
-    saveSessionState();
-    updateHeaderState();
-
+async function openMediaInTab() {
+  try {
+    const result = await window.EpicInspector.openMedia();
+    if (!result) return;
+    openResultInTab(result);
   } catch (err) {
     console.error(err);
     statusEl.textContent = `Open failed:\n${err.message || err}`;
   }
+}
+openBtn.addEventListener('click', () => {
+  if (!canChangeFileTab()) return;
+  openMediaInTab();
 });
+function newBlankDocument() {
+  if (!canChangeFileTab()) return;
+  addFileTab();
+  editor.focus();
+}
+window.EpicInspector?.onNewBlankDocument?.(newBlankDocument);
+window.EpicInspector?.onCloseTab?.(() => closeFileTab(activeFileTabId));
+window.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'w') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) closeFileTab(activeFileTabId);
+}, true);
+window.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey ||
+      event.key.toLowerCase() !== 't') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) newBlankDocument();
+}, true);
 
 function toggleTocDrawer() {
   const willOpen =
@@ -2649,6 +2605,18 @@ function shouldIgnoreHotkey(event) {
   return false;
 }
 
+// Handle the drawer shortcut before CodeMirror interprets arrow navigation.
+window.addEventListener("keydown", (event) => {
+  if (!event.metaKey || !event.altKey || event.ctrlKey || event.shiftKey ||
+      !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.repeat || emotiveState || document.querySelector('#shortcutHelp[open]') ||
+      !document.getElementById("confirmModal")?.classList.contains("hidden") ||
+      !tocDrawer || tocDrawer.classList.contains("is-hidden")) return;
+  toggleTocDrawer();
+}, true);
+
 window.addEventListener("keydown", (event) => {
   const key = String(event.key || "").toLowerCase();
   if (key !== "n" && key !== "t") return;
@@ -2683,7 +2651,7 @@ window.addEventListener("keydown", (event) => {
   if (isTypingTarget(active)) active.blur();
 });
 
-storeAudioBtn?.addEventListener("click", async () => {
+storeAudioBtn?.addEventListener("click", lockFileOperation(async () => {
   try {
     if (!isSavedTextProject()) {
       statusEl.textContent =
@@ -2777,7 +2745,7 @@ storeAudioBtn?.addEventListener("click", async () => {
     statusEl.textContent =
       `Link audio failed:\n${err.message || err}`;
   }
-});
+}));
 
 unlinkAudioBtn?.addEventListener("click", () => {
   linkedAudioPath = "";
@@ -2793,21 +2761,22 @@ async function saveCurrentTextFile({
   updateLinkedAudio = true,
   notifyStudio = true
 } = {}) {
+  const submittedText = editor.value;
   const result = await window.EpicInspector.saveText({
     filePath: currentFilePath,
-    text: editor.value
+    text: submittedText
   });
 
-  sourceEditorText = editor.value;
+  sourceEditorText = submittedText;
   sourceHadContent =
-    editor.value.trim().length > 0;
+    submittedText.trim().length > 0;
 
 
   if (updateLinkedAudio && linkedAudioPath) {
     const audioResult =
       await window.EpicInspector.storeInAudio({
         targetPath: linkedAudioPath,
-        epicx: editor.value,
+        epicx: submittedText,
         projectLabel:
           getDisplayName(currentFilePath) ||
           "Current project"
@@ -2839,18 +2808,18 @@ async function performSave({ saveAs = false } = {}) {
           "This project is linked to Studio, which saves it. Unlink it from Studio first to use Save As.";
         return;
       }
-      await saveLinkedStudioProject();
-      return;
+      return await saveLinkedStudioProject();
     }
     statusEl.textContent = saveAs ? "Save As..." : "Saving...";
 
+    const submittedText = editor.value;
     const isTextFile = /\.(epic|epicx|txt|md)$/i.test(currentFilePath || "");
 
     if (isTextFile && saveAs) {
       // Write the text to a new file and keep editing that file. Linked audio
       // and Studio are not touched; the next Save updates them as usual.
       const result = await window.EpicInspector.saveTextAs({
-        text: editor.value,
+        text: submittedText,
         defaultPath: currentFilePath
       });
 
@@ -2860,15 +2829,16 @@ async function performSave({ saveAs = false } = {}) {
       }
 
       currentFilePath = result.filePath;
-      sourceEditorText = editor.value;
-      sourceHadContent = editor.value.trim().length > 0;
+      scheduleEpicValidation();
+      sourceEditorText = submittedText;
+      sourceHadContent = submittedText.trim().length > 0;
 
       filePathEl.textContent = getDisplayName(currentFilePath);
       statusEl.textContent = `Saved as:\n${getDisplayName(result.filePath)}`;
 
       saveSessionState();
       updateHeaderState();
-      return;
+      return true;
     }
 
     if (isTextFile) {
@@ -2879,20 +2849,21 @@ async function performSave({ saveAs = false } = {}) {
           ? `Saved text and updated audio:\n${getDisplayName(result.filePath)} ↔ ${getDisplayName(linkedAudioPath)}`
           : `Saved text file:\n${getDisplayName(result.filePath)}`;
 
-      return;
+      return true;
     }
 
     if (!currentFilePath) {
       const result = await window.EpicInspector.saveTextAs({
-        text: editor.value
+        text: submittedText
       });
 
       if (!result) return;
 
       currentFilePath = result.filePath;
-      sourceEditorText = editor.value;
+      scheduleEpicValidation();
+      sourceEditorText = submittedText;
       sourceHadContent =
-        editor.value.trim().length > 0;
+        submittedText.trim().length > 0;
 
 
       filePathEl.textContent = getDisplayName(currentFilePath);
@@ -2902,12 +2873,12 @@ async function performSave({ saveAs = false } = {}) {
 
       saveSessionState();
       updateHeaderState();
-      return;
+      return true;
     }
 
     const result = await window.EpicInspector.saveMedia({
       filePath: linkedAudioPath || currentFilePath,
-      epicx: editor.value,
+      epicx: submittedText,
       saveAs
     });
 
@@ -2922,9 +2893,9 @@ async function performSave({ saveAs = false } = {}) {
     renderMetadata(result.reread);
 
     currentMetadata = result.reread;
-    sourceEditorText = editor.value;
+    sourceEditorText = submittedText;
     sourceHadContent =
-      editor.value.trim().length > 0;
+      submittedText.trim().length > 0;
 
     statusEl.textContent =
       `Save complete\n` +
@@ -2934,6 +2905,7 @@ async function performSave({ saveAs = false } = {}) {
 
     saveSessionState();
     updateHeaderState();
+    return result.verified !== false;
 
   } catch (err) {
     console.error(err);
@@ -2952,12 +2924,6 @@ addAlbumArtBtn?.addEventListener("click", () => {
 window.epicMenuSave = (options = {}) => performSave({ saveAs: Boolean(options.saveAs) });
 
 editor.addEventListener("click", maybeShowAuthorKeyPicker);
-editor.addEventListener("paste", (event) => {
-  const text = event.clipboardData?.getData("text/plain");
-  if (text && editor.selectionStart === editor.selectionEnd) {
-    rememberAddedEpicxTimestamps(editor.value, editor.selectionStart, text);
-  }
-});
 
 // In .epicx, an entry's number and timestamp sit on the two lines above its
 // [Section] label. Returns the first line of that entry (or the label line).
@@ -3129,8 +3095,6 @@ function installEmotiveRecipeStyles() {
 .emo-layer-name { margin: 10px 0 6px; font-size: 11px; color: var(--emo-muted); }
 .emo-layer-name:first-of-type { margin-top: 0; }
 .emo-hint, .emo-empty { color: var(--emo-muted); font-size: 13px; }
-.emo-delete { border-color: var(--emo-border); color: var(--emo-muted); }
-.emo-delete:hover:not(:disabled) { background: #d9534f; border-color: #d9534f; color: #fff; }
 .emo-text-row { display: flex; gap: 8px; position: relative; }
 .emo-text-wrap { position: relative; flex: 1; min-width: 0; }
 .emo-text-input { width: 100%; box-sizing: border-box; font: inherit; color: inherit; background: rgba(127,127,127,.12);
@@ -3201,7 +3165,7 @@ function installEmotiveRecipeStyles() {
 .emo-choice.is-on { background: var(--emo-accent); color: var(--emo-accent-fg); border-color: var(--emo-accent); font-weight: 600; }
 
 .emo-container {
-  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px;
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 10px;
   border: 1px solid var(--emo-border); border-radius: 10px;
 }
 .emo-container.is-draft { border: 1px dashed var(--emo-accent); }
@@ -3214,6 +3178,7 @@ function installEmotiveRecipeStyles() {
 .emo-recipes { display: flex; flex-direction: column; gap: 8px; }
 .emo-recipes > .emo-container { position: relative; transition: border-color .15s ease, background-color .15s ease, color .15s ease; cursor: pointer; }
 .emo-container.is-current {
+  padding: 8px 8px 8px 10px;
   margin-top: 17px; margin-bottom: 30px; color: #fff;
   background-color: rgb(53 78 155 / 26%); border-color: #4e63a8;
 }
@@ -3233,7 +3198,27 @@ function installEmotiveRecipeStyles() {
   border-radius: 0 9px 9px 0; background: var(--emo-accent); color: var(--emo-accent-fg);
   visibility: hidden; opacity: 0; transition: opacity .15s ease, visibility .15s ease;
 }
-.emo-container:has(.emo-delete) .emo-use { right: 40px; border-radius: 0; }
+.emo-container:has(.emo-actions) { padding-right: 128px; }
+.emo-actions {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 120px;
+  display: flex; border-radius: 0 9px 9px 0; overflow: hidden;
+  background-color: transparent; transition: background-color .15s ease;
+}
+.emo-container:hover .emo-actions { background-color: var(--emo-accent); }
+.emo-actions .emo-use {
+  position: static; flex: 1; width: 80px; border: 0; border-radius: 0;
+  padding: 0; font: inherit; font-weight: 700; cursor: pointer; background: transparent;
+}
+.emo-actions .emo-delete {
+  display: flex; align-items: center; justify-content: center; width: 40px;
+  box-sizing: border-box; padding: 0; border: 0; border-left: 2px solid transparent;
+  border-radius: 0; background-color: transparent; color: var(--emo-muted);
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.emo-container:hover .emo-delete { color: #000; border-left-color: #6e8ce5; }
+.emo-actions .emo-delete:hover:not(:disabled) {
+  background-color: rgb(111 141 231); color: rgb(121 31 28);
+}
 .emo-container:not(.is-current):hover .emo-reference .emo-source { visibility: hidden; }
 .emo-container:not(.is-current):hover .emo-use { visibility: visible; opacity: 1; }
 .emo-recipe { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; border: 0; border-radius: 6px; padding: 6px; text-align: left; font: inherit; color: inherit; background: transparent; cursor: pointer; }
@@ -3734,8 +3719,8 @@ function openEmotiveRecipeDialog(lineIndex) {
     lineIndex,
     sectionName: parsed.name,
     recipes: getEmotiveRecipeLibrary(),
-    originalText: editor.value,
-    originalRecipes: emotiveSessionRecipes.map(items => [...items]),
+    originalRecipeKey: emotiveRecipeKey(getSectionRecipeItems(lineIndex)),
+    originalLabels: getSectionLabelRun(editor.value.split('\n'), lineIndex).map(index => ({ index, text: editor.value.split('\n')[index] })),
     textValue: "",
     textError: "",
     paletteOpen: false,
@@ -3763,8 +3748,43 @@ function closeEmotiveRecipeDialog() {
   if (previousFocus && document.contains(previousFocus)) previousFocus.focus();
 }
 
+editor.addEventListener('input', event => {
+  if (!emotiveState || !['historyUndo', 'historyRedo'].includes(event.inputType)) return;
+  const state = emotiveState;
+  const parsed = parseSectionLabelLine(editor.value.split('\n')[state.lineIndex]);
+  if (!parsed) { closeEmotiveRecipeDialog(); return; }
+  const focused = document.activeElement;
+  const hadPanelFocus = state.overlay.contains(focused);
+  const action = focused?.dataset?.action;
+  const recipeKey = focused?.dataset?.recipeKey;
+  const inputSelection = focused?.classList.contains('emo-text-input')
+    ? [focused.selectionStart, focused.selectionEnd] : null;
+  state.sectionName = parsed.name;
+  state.recipes = getEmotiveRecipeLibrary();
+  renderEmotiveDialog();
+  if (hadPanelFocus) {
+    const replacement = [...state.overlay.querySelectorAll('button')].find(button =>
+      recipeKey ? button.dataset.recipeKey === recipeKey && button.dataset.action === action
+        : action && button.dataset.action === action);
+    const input = state.overlay.querySelector('.emo-text-input');
+    (replacement || input)?.focus();
+    if (inputSelection) input?.setSelectionRange(...inputSelection);
+  }
+});
+
 function handleEmotiveDialogKeydown(event) {
   if (document.querySelector('#shortcutHelp[open]')) return;
+  if ((event.metaKey || event.ctrlKey) && !event.altKey &&
+      !event.target?.classList?.contains('emo-text-input')) {
+    const key = event.key.toLowerCase();
+    const action = key === 'z' ? (event.shiftKey ? 'redo' : 'undo') : key === 'y' ? 'redo' : null;
+    if (action) {
+      event.preventDefault();
+      event.stopPropagation();
+      applyEditorHistoryAction(action);
+      return;
+    }
+  }
   if (event.key === "Enter" && event.target?.classList?.contains("emo-text-input")) {
     event.preventDefault();
     event.stopPropagation();
@@ -3812,19 +3832,20 @@ function renderEmotiveDialog() {
     ? displayedRecipes.map(recipe => {
         const key = emotiveRecipeKey(recipe.items);
         const assigned = key === currentKey;
+        const deletable = !assigned && !usedKeys.has(key);
         return `<div class="emo-container${assigned ? " is-current" : ""}">
           <button type="button" class="emo-recipe"
             data-recipe-key="${escapeHtml(key)}" aria-pressed="${assigned}"
             ${assigned ? 'aria-current="true"' : ''}>
             <span class="emo-items">${escapeHtml(recipe.items.join(", "))}</span>
-            ${assigned ? '<span class="emo-source">Applied</span>' : `<span class="emo-reference"><span class="emo-source">${escapeHtml(recipe.source || '')}</span><span class="emo-use" aria-hidden="true">Use</span></span>`}
+            ${assigned ? '<span class="emo-source">Applied</span>' : `<span class="emo-reference"><span class="emo-source">${escapeHtml(recipe.source || '')}</span>${deletable ? '' : '<span class="emo-use" aria-hidden="true">Use</span>'}</span>`}
           </button>
           ${assigned ? `<button type="button" class="emo-x" data-action="remove-section-recipe"
-            title="Remove from this section" aria-label="Remove from this section">×</button>` : !usedKeys.has(key) ? `<button type="button" class="emo-x emo-delete"
+            title="Remove from this section" aria-label="Remove from this section">×</button>` : deletable ? `<div class="emo-actions"><button type="button" class="emo-use" data-recipe-key="${escapeHtml(key)}">Use</button><button type="button" class="emo-x emo-delete"
             data-action="delete-recipe" data-recipe-key="${escapeHtml(key)}"
             title="Delete recipe" aria-label="Delete recipe">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>
-          </button>` : ''}
+          </button></div>` : ''}
         </div>`;
       }).join('')
     : '<div class="emo-empty">No recipes yet. Type one above.</div>';
@@ -3865,16 +3886,19 @@ function renderEmotiveDialog() {
           <div class="emo-recipes">${recipesHtml}</div>
         </div>
       </div>
-      <div class="emo-footer">
-        <button type="button" class="emo-btn" data-action="cancel">Cancel</button>
-        <button type="button" class="emo-btn emo-btn-primary" data-action="close">Done</button>
-      </div>
+      ${currentKey !== state.originalRecipeKey ? `<div class="emo-footer">
+        <button type="button" class="emo-btn emo-btn-primary" data-action="undo-recipe">Undo</button>
+      </div>` : ''}
     </div>`;
 }
 
 function handleEmotiveDialogClick(event) {
   const state = emotiveState;
   if (!state) return;
+  if (event.target === state.overlay) {
+    closeEmotiveRecipeDialog();
+    return;
+  }
 
   const target = event.target.closest("button") ||
     event.target.closest(".emo-container")?.querySelector(".emo-recipe");
@@ -3953,13 +3977,16 @@ function handleEmotiveDialogClick(event) {
     return;
   }
 
-  if (action === "cancel") {
-    if (editor.value !== state.originalText) {
-      replaceEditorText(state.originalText);
-      refreshEditorView();
-    }
-    emotiveSessionRecipes.splice(0, emotiveSessionRecipes.length, ...state.originalRecipes);
-    closeEmotiveRecipeDialog();
+  if (action === "undo-recipe") {
+    const lines = editor.value.split('\n');
+    for (const label of state.originalLabels) lines[label.index] = label.text;
+    const scrollTop = editor.scrollTop;
+    replaceEditorText(lines.join('\n'));
+    editor.scrollTop = scrollTop;
+    refreshEditorView();
+    state.recipes = getEmotiveRecipeLibrary();
+    renderEmotiveDialog();
+    state.overlay.querySelector('.emo-text-input')?.focus();
     return;
   }
 
@@ -3981,12 +4008,83 @@ function handleEmotiveDialogClick(event) {
 installEmotiveRecipeStyles();
 
 
+performSave = lockFileOperation(performSave);
+saveCurrentTextFile = lockFileOperation(saveCurrentTextFile);
+saveLinkedStudioProject = lockFileOperation(saveLinkedStudioProject);
+saveMetadataFieldChanges = lockFileOperation(saveMetadataFieldChanges);
+addAlbumArt = lockFileOperation(addAlbumArt);
+removeAlbumArt = lockFileOperation(removeAlbumArt);
+linkStudioTiming = lockFileOperation(linkStudioTiming);
+openMediaInTab = lockFileOperation(openMediaInTab);
+
 restoreSessionState();
 window.EpicInspector?.onEditorHistoryAction?.((action) => {
-  editor.focus();
+  if (!emotiveState) editor.focus();
 
   applyEditorHistoryAction(action);
 });
 window.EpicInspector?.onStudioTimingMenuAction?.(handleStudioTimingMenuAction);
 updateHeaderState();
 window.EpicInspector?.onShowShortcuts?.(() => window.EpicShortcutHelp.show(TAB_TRIGGERS));
+window.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey ||
+      event.key !== '/') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) window.EpicShortcutHelp.show(TAB_TRIGGERS);
+}, true);
+metadataPanel.addEventListener('input', saveSessionState);
+
+let fileDragDepth = 0;
+const isFileDrag = event => Array.from(event.dataTransfer?.types || []).includes('Files');
+function clearFileDropHint() {
+  fileDragDepth = 0;
+  document.body.classList.remove('file-drop-active');
+}
+async function openDroppedPaths(paths) {
+  const failures = [];
+  for (const filePath of [...new Set(paths)]) {
+    try {
+      const existing = fileTabs.find(tab => tab.currentFilePath === filePath);
+      if (existing) {
+        captureActiveFileTab(); applyFileTab(existing); saveSessionState();
+      } else {
+        openResultInTab(await window.EpicInspector.openFilePath(filePath));
+      }
+    } catch (error) { failures.push(`${getDisplayName(filePath)}: ${error.message || error}`); }
+  }
+  if (failures.length) {
+    setStatus(`Some files could not be opened:\n${failures.join('\n')}`);
+    saveSessionState();
+  }
+}
+openDroppedPaths = lockFileOperation(openDroppedPaths);
+window.addEventListener('dragenter', event => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault(); event.stopPropagation();
+  fileDragDepth++;
+  if (canChangeFileTab()) document.body.classList.add('file-drop-active');
+}, true);
+window.addEventListener('dragover', event => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault(); event.stopPropagation();
+  event.dataTransfer.dropEffect = canChangeFileTab() ? 'copy' : 'none';
+}, true);
+window.addEventListener('dragleave', event => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault(); event.stopPropagation();
+  if (--fileDragDepth <= 0) clearFileDropHint();
+}, true);
+window.addEventListener('dragend', clearFileDropHint, true);
+window.addEventListener('drop', event => {
+  if (!isFileDrag(event) && !event.dataTransfer?.files.length) return;
+  event.preventDefault(); event.stopPropagation();
+  clearFileDropHint();
+  if (!canChangeFileTab()) {
+    setStatus('Finish the current operation or close the dialog, then drop the files again.');
+    return;
+  }
+  const paths = Array.from(event.dataTransfer.files, file => window.EpicInspector.getDroppedFilePath(file)).filter(Boolean);
+  if (paths.length) openDroppedPaths(paths);
+  else setStatus('Drop local EPIC, EPICX, TXT, Markdown, WAV, or MP3 files to open them.');
+}, true);

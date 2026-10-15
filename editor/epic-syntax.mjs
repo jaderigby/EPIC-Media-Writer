@@ -4,6 +4,7 @@ export function epicSyntax(source) {
   const marks = [];
   const lineStyles = [];
   let offset = 0, fences = 0, header = false, freeflow = false, block = '', entry = false;
+  let freeflowNotes = false;
   const timeLine = text => /^\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}(?:\s*-->\s*\d{2}:\d{2}(?::\d{2})?\.\d{3})?\s*$/.test(text);
   for (let index = 0; index < lines.length; index++) {
     const text = lines[index], trimmed = text.trim(), classes = [];
@@ -16,10 +17,12 @@ export function epicSyntax(source) {
     if (entry) classes.push('cm-epic-entry');
     if (startsEntry) classes.push('cm-epic-entry-start');
     if (entry && !(lines[index + 1] || '').trim()) classes.push('cm-epic-entry-end');
-    const opensFreeflow = !header && /^\s*\[\s*\{&\}[\s\S]*\]\s*$/.test(text);
-    const closesFreeflow = freeflow && trimmed === ':::';
+    const opensFreeflow = !header && !freeflowNotes && /^\s*\[\s*\{&\}[\s\S]*\]\s*$/.test(text);
+    if (opensFreeflow && /^\s*\[\s*\{&\}\s*\]\s*$/.test(text)) freeflowNotes = true;
+    const closesFreeflow = freeflow && !freeflowNotes && trimmed === ':::';
     if (freeflow || opensFreeflow) {
       classes.push('epic-freeflow-section', 'cm-epic-freeflow');
+      if (freeflowNotes) classes.push('cm-epic-freeflow-notes');
       if (opensFreeflow) classes.push('cm-epic-freeflow-opener');
       if (closesFreeflow) classes.push('epic-freeflow-closer');
     } else if (trimmed === '---') {

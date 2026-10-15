@@ -347,10 +347,18 @@ function parseStyles(cursor, firstValue, lineNumber) {
       if (!startMatch) {
         issues.push(makeIssue("INVALID_STYLE_OPTION_MARKER", "Style options must start with an integer followed by a period and a space.", startLineNumber));
       }
+      const optionLines = [recoveryMatch[2] || ""];
+      // EPIC 1.7: a blank line ends an option, not another numbered-looking
+      // line or field-like phrase within its freeform prompt.
+      while (!cursor.eof()) {
+        const continuation = cursor.peek();
+        if (continuation.trim() === "" || continuation.trim() === "---") break;
+        optionLines.push(cursor.next());
+      }
       options.push({
         index: Number(recoveryMatch[1]),
-        value: recoveryMatch[2] || "",
-        lines: [recoveryMatch[2] || ""],
+        value: optionLines.join("\n"),
+        lines: optionLines,
         separatorBefore,
         loc: { startLine: startLineNumber },
       });

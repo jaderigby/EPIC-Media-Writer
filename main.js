@@ -1,8 +1,9 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, screen } = require("electron");
 const { parseEpicText } = require("./lib/epic-parser");
 const path = require("path");
 
 const fs = require("fs/promises");
+const { readOpenFile, SUPPORTED_EXTENSIONS } = require("./lib/open-file.cjs");
 
 let mainWindowRef = null;
 let studioTimingMenuState = {
@@ -216,6 +217,14 @@ function createApplicationMenu(win) {
       label: "File",
       submenu: [
         {
+          label: "New Blank Document",
+          accelerator: "CmdOrCtrl+N",
+          click: () => {
+            if (!win.isDestroyed()) win.webContents.send('document:new-blank');
+          }
+        },
+        { type: "separator" },
+        {
           label: "Save",
           accelerator: "CmdOrCtrl+S",
           click: () => runRendererSave(false)
@@ -226,7 +235,11 @@ function createApplicationMenu(win) {
           click: () => runRendererSave(true)
         },
         { type: "separator" },
-        isMac ? { role: "close" } : { role: "quit" }
+        {
+          label: 'Close Tab', accelerator: 'CmdOrCtrl+W',
+          click: () => { if (!win.isDestroyed()) win.webContents.send('document:close-tab'); }
+        },
+        ...(!isMac ? [{ role: 'quit' }] : [])
       ]
     },
     {
@@ -267,6 +280,7 @@ function createApplicationMenu(win) {
       label: "Help",
       submenu: [{
         label: "Keyboard Shortcuts & Tab Triggers…",
+        accelerator: 'CommandOrControl+/',
         click: () => {
           if (!win.isDestroyed()) win.webContents.send("shortcuts:show");
         }
@@ -761,6 +775,26 @@ ipcMain.handle("store-in-audio", async (event, payload) => {
   };
 });
 
+function getSuggestedTextFilename(text) {
+  const lines = String(text || "").replace(/^\uFEFF/, "").trimStart().split(/\r?\n/);
+  // Read the document header, rather than a Title field in a body example.
+  const headerStart = lines[0]?.trim() === "---" ? 1 : 0;
+  let title = "";
+  for (const line of lines.slice(headerStart)) {
+    if (line.trim() === "---" || /^\s*\[/.test(line) || /^\s*(`{3,}|~{3,})/.test(line)) break;
+    const match = line.match(/^Title:[ \t]*(.*)$/i);
+    if (match) {
+      title = match[1].trim();
+      break;
+    }
+  }
+  const filename = title
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  return `${filename || "Untitled"}.epic`;
+}
+
 ipcMain.handle("save-text-as", async (event, payload) => {
   // For "Save As" the renderer passes the current file so the dialog opens
   // next to it with its name and type preselected.
@@ -781,7 +815,7 @@ ipcMain.handle("save-text-as", async (event, payload) => {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showSaveDialog(parentWindow, {
     title: requestedPath ? "Save EPIC File As" : "Save EPIC File",
-    defaultPath: requestedPath || "Untitled.epic",
+    defaultPath: requestedPath || getSuggestedTextFilename(payload?.text),
     filters
   });
 
@@ -811,9 +845,24 @@ ipcMain.handle("save-text", async (_event, payload) => {
 });
 
 function createWindow() {
+  const windowStatePath = path.join(app.getPath('userData'), 'window-state.json');
+  const stateFs = require('fs');
+  let savedState;
+  try {
+    const value = JSON.parse(stateFs.readFileSync(windowStatePath, 'utf8'));
+    if (['x', 'y', 'width', 'height'].every(key => Number.isFinite(value[key])) &&
+        value.width > 0 && value.height > 0) savedState = value;
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('Could not restore window state:', error.message);
+  }
+  const area = (savedState ? screen.getDisplayMatching(savedState) : screen.getPrimaryDisplay()).workArea;
+  const width = Math.min(Math.round(savedState?.width || area.width * 0.85), area.width);
+  const height = Math.min(Math.round(savedState?.height || area.height * 0.85), area.height);
+  const x = Math.max(area.x, Math.min(Math.round(savedState?.x ?? area.x + (area.width - width) / 2), area.x + area.width - width));
+  const y = Math.max(area.y, Math.min(Math.round(savedState?.y ?? area.y + (area.height - height) / 2), area.y + area.height - height));
   const win = new BrowserWindow({
-    width: 1000,
-    height: 760,
+    width, height, x, y,
+    show: false,
     title: "EPIC Media Writer",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -824,6 +873,21 @@ function createWindow() {
   });
 
   mainWindowRef = win;
+
+  win.once('ready-to-show', () => {
+    if (savedState?.maximized) win.maximize();
+    win.show();
+  });
+  win.on('close', () => {
+    try {
+      stateFs.mkdirSync(path.dirname(windowStatePath), { recursive: true });
+      stateFs.writeFileSync(windowStatePath, JSON.stringify({
+        ...win.getNormalBounds(), maximized: win.isMaximized()
+      }));
+    } catch (error) {
+      console.warn('Could not save window state:', error.message);
+    }
+  });
 
   win.on("closed", () => {
     if (mainWindowRef === win) {
@@ -986,48 +1050,13 @@ async function writeMediaArtworkToOutput({
 ipcMain.handle("open-media", async () => {
   const result = await dialog.showOpenDialog({
     properties: ["openFile"],
-    filters: [
-      {
-        name: "EPIC Files",
-        extensions: [
-          "epic", 
-          "epicx",
-          "txt",
-          "md", 
-          "wav", 
-          "mp3"
-        ]
-      }
-    ]
+    filters: [{ name: "EPIC Files", extensions: SUPPORTED_EXTENSIONS }]
   });
-
   if (result.canceled) return null;
-
-  const filePath = result.filePaths[0];
-  const ext = path.extname(filePath).toLowerCase();
-
-  if (ext === ".epic" || ext === ".epicx" || ext === ".txt" || ext === ".md") {
-    const text = await fs.readFile(filePath, "utf8");
-
-    return {
-      kind: "text",
-      filePath,
-      text,
-      metadata: null,
-      epicx: text
-    };
-  }
-
-  const metadata = await readMediaMetadata(filePath);
-  const kind = getMediaKind(filePath);
-
-  return {
-    kind,
-    filePath,
-    metadata,
-    epicx: metadata.epicx || ""
-  };
+  return readOpenFile(result.filePaths[0], readMediaMetadata);
 });
+
+ipcMain.handle("open-file-path", (_event, filePath) => readOpenFile(filePath, readMediaMetadata));
 
 ipcMain.handle("save-media", async (event, payload) => {
   const { filePath, epicx, saveAs } = payload;

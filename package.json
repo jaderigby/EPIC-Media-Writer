@@ -1,7 +1,7 @@
 {
   "name": "epic-media-writer",
   "productName": "EPIC Media Writer",
-  "version": "2.0.0",
+  "version": "2.7.0",
   "author": "Jade C. Rigby",
   "description": "A light - but powerful - writing environment for authoring EPIC media and inspecting audio file metadata properties.",
   "main": "main.js",
@@ -11,7 +11,9 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "build:editor": "node scripts/build-editor.cjs",
-    "test:editor": "npm run build:editor && node test/editor-integration.test.cjs"
+    "test:editor": "npm run build:editor && node test/editor-integration.test.cjs",
+    "test:tabs": "npm run build:editor && node test/file-tabs.test.cjs",
+    "test:drop": "npm run build:editor && node test/file-drop.test.cjs"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.8.1",

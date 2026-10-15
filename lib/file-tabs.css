@@ -1,0 +1,35 @@
+#fileTabBar { flex: 0 0 auto; display: flex; align-items: stretch; gap: 6px; padding: 4px 16px 0; background: #0a1520; border-bottom: 1px solid #4f68b3; min-width: 0; }
+#fileTabList { display: flex; gap: 0; overflow-x: auto; min-width: 0; }
+#fileTabList:has(> .file-tab:only-child) { display: none; }
+.file-tab { display: flex; align-items: stretch; flex: 0 0 auto; border: 1px solid #5975cb; border-radius: 0; border-bottom: none; background: transparent; overflow: hidden; }
+.file-tab:first-child { border-top-left-radius: 5px; }
+.file-tab:last-child { border-top-right-radius: 5px; }
+.file-tab + .file-tab { border-left: none; }
+.file-tab.is-studio-linked::before { content: ''; flex: 0 0 14px; background: linear-gradient(to right, #2f437e, transparent); }
+.file-tab.is-studio-linked.is-active::before { background: linear-gradient(to right, #4f6ec8, transparent); }
+.file-tab.is-active { background-color: #283e5e; }
+#fileTabBar button { background: transparent; border: 0; color: #dce5f6; font: inherit; font-size: 13px; }
+#fileTabBar .file-tab-select { max-width: 240px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 7px 4px 7px 17px; text-align: left; border-radius: 0; }
+#fileTabBar .file-tab:not(.is-active) .file-tab-select:not(:hover) { color: #9ba4b5; }
+#fileTabBar .file-tab.is-studio-linked .file-tab-select { padding: 7px 4px 7px 5px; }
+#fileTabBar .file-tab-action { padding: 4px 8px; color: #a1add1; border-radius: 0; }
+#fileTabBar .file-tab:first-child .file-tab-select { border-top-left-radius: 4px; }
+#fileTabBar .file-tab:last-child .file-tab-action { border-top-right-radius: 4px; }
+#fileTabBar button:hover { background: #ffffff12; color: white; }
+#fileTabBar button:focus-visible { outline: 2px solid #7c9cff; outline-offset: -2px; }
+
+body.file-drop-active::after {
+  content: "Drop files to open in tabs"; position: fixed; inset: 12px; z-index: 20000;
+  display: grid; place-items: center; pointer-events: none;
+  border: 2px dashed #7c9cff; border-radius: 10px;
+  background: #101a2bd9; color: white; font-size: 20px;
+}
+
+#fileTabBar .file-tab-action { display: grid; place-items: center; width: 35px; flex: 0 0 35px; }
+#fileTabBar .file-tab-action .store-icon { margin: 0; fill: currentColor; }
+
+#fileTabBar .file-tab-action:has(.store-icon) .file-tab-close-symbol { display: none; }
+#fileTabBar .file-tab:hover .file-tab-action .store-icon,
+#fileTabBar .file-tab:focus-within .file-tab-action .store-icon { display: none; }
+#fileTabBar .file-tab:hover .file-tab-close-symbol,
+#fileTabBar .file-tab:focus-within .file-tab-close-symbol { display: inline; }

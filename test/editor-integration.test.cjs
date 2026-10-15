@@ -18,6 +18,81 @@ const path = require('node:path');
     const read = () => page.evaluate(() => editor.value);
     const load = text => page.evaluate(text => { editor.load(text); sourceEditorText = text; refreshEditorView(); }, text);
     const shortcut = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await load('First\nSecond\nLast');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(8); });
+    await page.keyboard.press(`${shortcut}+l`);
+    assert.equal(await page.evaluate(() => editor.value.slice(editor.selectionStart, editor.selectionEnd)), 'Second\n', 'Cmd+L selects the whole line including its newline');
+    await page.evaluate(() => editor.setSelectionRange(editor.value.length));
+    await page.keyboard.press(`${shortcut}+l`);
+    assert.equal(await page.evaluate(() => editor.value.slice(editor.selectionStart, editor.selectionEnd)), 'Last', 'Cmd+L selects the last line without a trailing newline');
+    await load('First\nSecond\nThird\nFourth');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(8); });
+    await page.keyboard.press('Alt+ArrowUp');
+    assert.equal(await read(), 'Second\nFirst\nThird\nFourth', 'Option+Up moves the current line up');
+    assert.equal(await page.evaluate(() => editor.selectionStart), 2, 'Caret follows the moved line');
+    await page.keyboard.press('Alt+ArrowDown');
+    assert.equal(await read(), 'First\nSecond\nThird\nFourth', 'Option+Down moves the current line down');
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'Second\nFirst\nThird\nFourth', 'Line movement is undoable');
+    await load('First\nSecond\nThird\nFourth');
+    await page.evaluate(() => editor.setSelectionRange(6, 18));
+    await page.keyboard.press('Alt+ArrowUp');
+    assert.equal(await read(), 'Second\nThird\nFirst\nFourth', 'Selected lines move together');
+    await page.keyboard.press('Alt+ArrowUp');
+    assert.equal(await read(), 'Second\nThird\nFirst\nFourth', 'Moving above the first line leaves text unchanged');
+    await load('one one one one');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(0, 3); });
+    await page.keyboard.press(`${shortcut}+d`);
+    await page.keyboard.press(`${shortcut}+k`);
+    assert.deepEqual(await page.evaluate(() => editor.view.state.selection.ranges.map(range => range.from)), [0, 8], 'Cmd+K skips the current match and keeps earlier selections');
+    await page.keyboard.press(`${shortcut}+k`);
+    assert.deepEqual(await page.evaluate(() => editor.view.state.selection.ranges.map(range => range.from)), [0, 12], 'Repeated skipping advances');
+    await page.keyboard.press(`${shortcut}+k`);
+    assert.deepEqual(await page.evaluate(() => editor.view.state.selection.ranges.map(range => range.from)), [0, 4], 'Skipping wraps past already selected matches');
+    assert.equal(await page.locator('.epic-skip-notice').textContent(), 'skipped');
+    assert.equal(await page.locator('.epic-skip-notice').count(), 1, 'Repeated skips reuse one notice');
+    assert.ok(await page.locator('.epic-skip-notice').evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return Math.abs(box.x + box.width / 2 - innerWidth / 2) < 1 &&
+        Math.abs(box.y + box.height / 2 - innerHeight / 2) < 1;
+    }), 'Skip notice is centered in the window');
+    assert.equal(await page.evaluate(() => editor.hasFocus), true, 'Notice does not steal focus');
+    await page.locator('.epic-skip-notice').waitFor({ state: 'detached' });
+    await page.keyboard.type('two');
+    assert.equal(await read(), 'two two one one', 'Skipped occurrences remain unchanged when typing');
+    await load('echo Echo echo\necho');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(10, 14); });
+    for (const count of [2, 3, 3]) {
+      await page.keyboard.press(`${shortcut}+d`);
+      assert.equal(await page.evaluate(() => editor.view.state.selection.ranges.length), count, 'Cmd+D adds matches, wraps, and stops when all are selected');
+    }
+    assert.equal(await page.locator('.cm-extra-selection').count(), 2, 'Additional selections are visible');
+    await page.keyboard.type('song');
+    assert.equal(await read(), 'song Echo song\nsong', 'Typing replaces every selected occurrence, case sensitively');
+    assert.equal(await page.locator('.cm-extra-cursor').count(), 2, 'Additional cursors remain visible after typing');
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'echo Echo echo\necho', 'Undo restores all replacements together');
+    await load('Sing these words aloud');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(5, 16); });
+    for (const marker of ['*', '**', '']) {
+      await page.keyboard.press('Meta+8');
+      assert.equal(await read(), `Sing ${marker}these words${marker} aloud`, 'Cmd+8 cycles emphasis markers');
+      assert.equal(await page.evaluate(() => editor.value.slice(editor.selectionStart, editor.selectionEnd)), 'these words', 'Words remain selected for cycling');
+    }
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'Sing **these words** aloud', 'Each cycle is independently undoable');
+    await page.keyboard.press(`${shortcut}+Shift+z`);
+    assert.equal(await read(), 'Sing these words aloud');
+    for (const [input, output] of [['*words*', '**words**'], ['**words**', 'words']]) {
+      await load(input);
+      await page.evaluate(() => editor.setSelectionRange(0, editor.value.length));
+      await page.keyboard.press('Meta+8');
+      assert.equal(await read(), output, 'Selections including markers also cycle');
+    }
+    await page.evaluate(() => editor.setSelectionRange(2));
+    await page.keyboard.press('Meta+8');
+    assert.equal(await read(), 'words', 'An empty selection is unchanged');
+    await load('');
     await page.locator('.cm-content').click();
     await page.keyboard.press('Tab');
     assert.match(await read(), /^---\nTitle: Untitled/);
@@ -57,8 +132,24 @@ const path = require('node:path');
       await load(text);
       await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
       await page.keyboard.press('Tab');
-      assert.equal(await read(), text, 'Trigger does not expand inside ordinary text');
+      assert.equal(await read(), text + '    ', 'Ordinary Tab inserts four spaces without expanding triggers');
+      assert.equal(await page.evaluate(() => editor.hasFocus), true, 'Tab keeps editor focus');
+      await page.keyboard.press(`${shortcut}+z`);
+      assert.equal(await read(), text, 'Tab insertion is undoable');
     }
+
+    await load('a  b\n c ');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(1, 7); });
+    assert.equal(await page.locator('.cm-selected-space').count(), 3, 'Only selected spaces have dots, across lines');
+    assert.ok(await page.locator('.cm-selected-space').first().evaluate(element =>
+      Math.abs(parseFloat(getComputedStyle(element, '::after').top) - element.getBoundingClientRect().height / 2) < 1
+    ), 'Dots are vertically centered');
+    assert.equal(await read(), 'a  b\n c ', 'Dots do not alter the document');
+    await page.keyboard.press('Tab');
+    assert.equal(await read(), 'a     ', 'Tab replaces selected text with four spaces');
+    assert.equal(await page.locator('.cm-selected-space').count(), 0, 'Dots disappear when selection collapses');
+    await page.keyboard.press(`${shortcut}+z`);
+    assert.equal(await read(), 'a  b\n c ', 'Undo restores replaced selection text');
 
     for (const exitKey of ['Enter', 'Tab']) {
       await load('');
@@ -88,20 +179,50 @@ const path = require('node:path');
     await page.keyboard.press(`${shortcut}+Shift+Semicolon`);
     assert.equal(await read(), '[{&}]\n:::\n');
 
-    // Paste is observed before insertion, preserving the duplicate-timestamp index.
+    // Start entries inherit the current section and leave selected lyrics intact.
+    const startSource = '1\n00:59.100\n[Verse {{open}}]\nKeep these words\n\n2\n01:10.000\n[Chorus]\nNext';
+    const startExpected = '1\n00:59.100\n[Verse {{open}}]\nKeep these words\n\n2\n01:01.100\n[Verse {{open}}]\n{{start}}\n\n3\n01:10.000\n[Chorus]\nNext';
+    await load(startSource);
+    await page.evaluate(() => { editor.focus(); const at = editor.value.indexOf('these'); editor.setSelectionRange(at, at + 5); });
+    await page.keyboard.press('Meta+Shift+d');
+    assert.equal(await read(), startExpected, 'Start entry preserves lyrics, section instructions, milliseconds and later timing');
+    assert.equal(await page.evaluate(() => editor.selectionStart), startExpected.indexOf('{{start}}') + 9, 'Caret follows the start marker');
+    await page.keyboard.press('Meta+z');
+    assert.equal(await read(), startSource, 'One undo removes the entry and restores numbering');
+    await page.keyboard.press('Meta+Shift+z');
+    assert.equal(await read(), startExpected, 'Redo restores the complete entry');
+    await page.evaluate(() => editor.setSelectionRange(editor.value.indexOf('{{start}}') + 9));
+    await page.keyboard.press('Meta+Shift+d');
+    assert.ok((await read()).includes('3\n01:03.100\n[Verse {{open}}]\n{{start}}'), 'Repeated shortcut follows the newly inserted entry: ' + await read());
+    for (const [time, expected] of [['00:01.000', '00:03.000'], ['00:59:59.250', '01:00:01.250'], ['59:59.000', '01:00:01.000']]) {
+      await load('1\n' + time + '\n[Verse]\nWords');
+      await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
+      await page.keyboard.press('Meta+Shift+d');
+      assert.ok((await read()).endsWith('2\n' + expected + '\n[Verse]\n{{start}}'), 'Caret-only insertion handles whole seconds and hour rollover');
+    }
+    await load('[Verse]\nPlain lyrics');
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(editor.value.length); });
+    await page.keyboard.press('Meta+Shift+d');
+    assert.equal(await read(), '[Verse]\nPlain lyrics', 'Untimed text stays unchanged');
+    await load(startSource);
+    await page.evaluate(() => { editor.focus(); const at = editor.value.indexOf('these'); editor.setSelectionRange(at, at + 5); });
+    await page.keyboard.press('Meta+Shift+a');
+    assert.equal(await read(), startExpected.replace('Keep these words', 'Keep  words').replace('{{start}}', 'these'), 'The existing selection shortcut still moves only selected text');
+
+    // Paste corrects numbering and timing in the same undoable edit.
     await load('1\n00:01.000\n[Verse]\nLyric\n\n');
     await page.evaluate(() => {
-      pendingAddedEpicxTimestamps = [];
       editor.focus(); editor.setSelectionRange(editor.value.length);
-      const data = new DataTransfer(); data.setData('text/plain', '2\n00:01.000\n[Chorus]\nPasted');
+      const data = new DataTransfer(); data.setData('text/plain', '1\n00:01.000\n[Chorus]\nPasted');
       editor.view.contentDOM.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
     });
     assert.ok((await read()).endsWith('[Chorus]\nPasted'));
-    assert.deepEqual(await page.evaluate(() => pendingAddedEpicxTimestamps), [{ timestamp: '00:01.000', occurrence: 1 }]);
+    assert.equal(await read(), '1\n00:01.000\n[Verse]\nLyric\n\n2\n00:03.000\n[Chorus]\nPasted');
     await page.keyboard.press(`${shortcut}+z`);
     assert.ok(!(await read()).includes('Pasted'), 'Paste is undoable');
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('editor-history:action', 'redo'));
     await page.waitForFunction(() => editor.value.includes('Pasted'));
+    assert.ok((await read()).includes('2\n00:03.000'), 'Redo restores the corrected paste');
 
     const song = '---\nTitle: Test\nAuthor: Writer\n---\n\n1\n00:01.000\n[Verse {{open}}]\n' + 'A wrapped lyric line '.repeat(90) + '\n\n2\n00:02.000\n[Chorus {{energetic}}]\n**Strong** and *soft*, `code`, [link](https://example.com)\n';
     await load(song);
@@ -112,6 +233,12 @@ const path = require('node:path');
     await page.locator('.toc-item').filter({ hasText: 'Chorus' }).click();
     await page.waitForTimeout(100);
     assert.equal(await page.evaluate(() => getEditorCaretLineIndex()), 12, 'Drawer uses logical lines despite wrapping');
+    await page.waitForFunction(() => {
+      const view = editor.view;
+      const section = view.coordsAtPos(view.state.selection.main.head);
+      const viewport = view.scrollDOM.getBoundingClientRect();
+      return section && Math.abs((section.top + section.bottom) / 2 - (viewport.top + viewport.bottom) / 2) < 25;
+    });
     assert.ok(await page.locator('.cm-epic-flash').count());
     const lyric = page.locator('.cm-line').filter({ hasText: '**Strong**' });
     assert.ok(await lyric.isVisible());
@@ -119,14 +246,36 @@ const path = require('node:path');
     assert.equal(await page.evaluate(y => editor.lineIndexAtClientY(y), box.y + box.height / 2), 13);
 
     await page.evaluate(() => openEmotiveRecipeDialog(7));
+    assert.equal(await page.locator('.emo-footer button').count(), 0, 'No footer actions before assignment changes');
     await page.locator('.emo-recipe').filter({ hasText: 'energetic' }).click();
     assert.ok((await read()).includes('[Verse {{energetic}}]'));
-    await page.locator('[data-action="cancel"]').click();
-    assert.equal(await read(), song, 'Recipe Cancel restores original text');
+    await page.locator('[data-action="undo-recipe"]').click();
+    assert.equal(await read(), song, 'Recipe Undo restores the original assignment');
+    assert.equal(await page.locator('.emo-dialog').count(), 1, 'Undo keeps the panel open');
+    assert.equal(await page.locator('.emo-footer button').count(), 0, 'Undo disappears after restoring the assignment');
+    await page.keyboard.press('Escape');
     await page.evaluate(() => openEmotiveRecipeDialog(7));
     await page.locator('.emo-recipe').filter({ hasText: 'energetic' }).click();
-    await page.locator('.emo-footer [data-action="close"]').click();
+    await page.locator('.emo-header [data-action="close"]').click();
     assert.ok((await read()).includes('[Verse {{energetic}}]'));
+    await page.evaluate(() => openEmotiveRecipeDialog(7));
+    await page.locator('[data-action="remove-section-recipe"]').click();
+    assert.equal(await page.locator('[data-action="undo-recipe"]').count(), 1, 'Removing the assignment offers Undo');
+    await page.locator('[data-action="undo-recipe"]').focus();
+    await page.keyboard.press(`${shortcut}+z`);
+    await page.waitForFunction(() => document.querySelector('.emo-recipe[aria-current="true"]')?.textContent.includes('energetic'));
+    assert.equal(await page.locator('[data-action="undo-recipe"]').count(), 0, 'Keyboard undo refreshes the assignment and panel Undo state');
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('editor-history:action', 'redo'));
+    await page.waitForFunction(() => !document.querySelector('.emo-recipe[aria-current="true"]'));
+    assert.equal(await page.locator('[data-action="undo-recipe"]').count(), 1, 'Menu redo refreshes the panel');
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('editor-history:action', 'undo'));
+    await page.waitForFunction(() => !!document.querySelector('.emo-recipe[aria-current="true"]'));
+    await page.locator('.emo-header [data-action="close"]').focus();
+    await page.keyboard.press(`${shortcut}+Shift+z`);
+    await page.waitForFunction(() => !document.querySelector('.emo-recipe[aria-current="true"]'));
+    await page.locator('.emo-overlay').click({ position: { x: 5, y: 5 } });
+    assert.equal(await page.locator('.emo-dialog').count(), 0, 'Outside click closes the panel');
+    assert.ok(!(await read()).includes('[Verse {{energetic}}]'), 'Outside dismissal retains assignment changes');
     await page.evaluate(() => { editor.focus(); editor.setSelectionRange(getOffsetForLine(editor.value, 12)); });
     await page.keyboard.press(`${shortcut}+e`);
     assert.equal(await page.locator('.emo-dialog').count(), 1, 'Emotive shortcut recognizes CodeMirror focus');
@@ -176,6 +325,18 @@ const path = require('node:path');
     await page.keyboard.press('Tab');
     await page.keyboard.press('Tab');
     assert.ok(await page.evaluate(() => editor.selectionStart > editor.value.indexOf('Title:')), 'Header Tab navigation survives');
+
+    await load(Array.from({ length: 180 }, (_, i) => i % 60 === 0 ? 'match' : `Line ${i}`).join('\n'));
+    await page.evaluate(() => { editor.focus(); editor.setSelectionRange(0, 5); });
+    for (const key of ['d', 'k']) {
+      await page.keyboard.press(`${shortcut}+${key}`);
+      await page.waitForFunction(() => {
+        const view = editor.view;
+        const caret = view.coordsAtPos(view.state.selection.main.head);
+        const viewport = view.scrollDOM.getBoundingClientRect();
+        return caret && Math.abs((caret.top + caret.bottom) / 2 - (viewport.top + viewport.bottom) / 2) < 25;
+      });
+    }
 
     const largeSong = Array.from({ length: 1500 }, (_, i) => `${i + 1}\n00:01.000\n[Verse]\nLyric ${i}\n`).join('\n');
     await load(largeSong);
@@ -238,11 +399,22 @@ const path = require('node:path');
     await load(song);
     const beforeHelp = await read();
     await page.evaluate(() => editor.focus());
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcuts:show'));
+    const beforeDrawerShortcut = await page.evaluate(() => ({ open: tocDrawer.classList.contains('open'), caret: editor.selectionStart }));
+    for (const key of ['ArrowUp', 'ArrowDown']) {
+      await page.keyboard.press(`Meta+Alt+${key}`);
+      assert.equal(await page.evaluate(() => tocDrawer.classList.contains('open')), key === 'ArrowUp' ? !beforeDrawerShortcut.open : beforeDrawerShortcut.open, 'Both vertical shortcuts toggle the drawer');
+      assert.equal(await page.evaluate(() => editor.selectionStart), beforeDrawerShortcut.caret, 'Drawer shortcut leaves caret unchanged');
+      assert.equal(await page.evaluate(() => editor.hasFocus), true, 'Drawer shortcut keeps editor focus');
+    }
+    await page.keyboard.press('Meta+/');
     await page.waitForSelector('#shortcutHelp[open]');
+    assert.ok((await page.locator('#shortcutHelp').innerText()).includes('plain → *emphasis* → **bold** → plain'), 'Help lists emphasis cycling');
+    await page.keyboard.press('Meta+/');
+    assert.equal(await page.locator('#shortcutHelp').count(), 1, 'Repeated help shortcut keeps a single panel');
     assert.ok(await page.locator('#shortcutHelp').innerText().then(text => text.includes('gen → Tab') && text.includes('[Generation]\nStyles:')));
     const drawerWasOpen = await page.evaluate(() => tocDrawer.classList.contains('open'));
     await page.keyboard.press('n');
+    await page.keyboard.press('Meta+Alt+ArrowUp');
     assert.equal(await page.evaluate(() => tocDrawer.classList.contains('open')), drawerWasOpen, 'Help blocks background shortcuts');
     await page.screenshot({ path: path.join(userData, 'shortcuts.png') });
     await page.keyboard.press('Escape');
