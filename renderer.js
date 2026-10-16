@@ -935,7 +935,9 @@ function applyStudioTimingSnapshot(snapshot) {
 
   const nextLines = [...lines];
 
-  for (let index = 0; index < parsedEntries.length; index += 1) {
+  // Work backwards: adding/removing micro-events must not shift the source
+  // locations of entries that have yet to be updated.
+  for (let index = parsedEntries.length - 1; index >= 0; index -= 1) {
     const parsedEntry = parsedEntries[index];
     const studioEntry = entries[index];
     const timingLine = String(studioEntry.timingLine || "").trim();
@@ -948,6 +950,19 @@ function applyStudioTimingSnapshot(snapshot) {
       };
     }
 
+    // Older Studio versions omit this field and continue to sync anchors only.
+    if (studioEntry.microEvents !== undefined) {
+      if (!Array.isArray(studioEntry.microEvents) || studioEntry.microEvents.some(
+        line => typeof line !== 'string' || !/^\s*@/.test(line) || /[\r\n]/.test(line)
+      )) {
+        return { applied: false, reason: `Studio micro-events for entry ${index + 1} are invalid.` };
+      }
+      const payloadStart = timingLineIndex + 1;
+      const entryEnd = parsedEntry.loc.endLine;
+      const microLines = new Set((parsedEntry.microEvents || []).map(event => event.loc.startLine - 1));
+      const payload = lines.slice(payloadStart, entryEnd).filter((line, offset) => !microLines.has(payloadStart + offset));
+      nextLines.splice(payloadStart, entryEnd - payloadStart, ...payload, ...studioEntry.microEvents);
+    }
     nextLines[timingLineIndex] = timingLine;
   }
 
