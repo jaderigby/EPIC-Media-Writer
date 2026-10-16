@@ -200,6 +200,7 @@ function createApplicationMenu(win) {
           submenu: [
             {
               id: "studioTimingLink",
+              accelerator: "CmdOrCtrl+Shift+L",
               label: studioTimingMenuState.project
                 ? (studioTimingMenuState.linked ? "Unlink EPIC Project from Studio" : "Link EPIC Project to Studio...")
                 : (studioTimingMenuState.linked ? "Unlink EPICX (Studio) Timing" : "Link EPICX (Studio) Timing..."),
