@@ -36,3 +36,15 @@ for (const line of notesTokens.lines) {
 }
 assert.ok(notesTokens.lines.some(line => line.from === notesSource.lastIndexOf('Last line') && line.className.includes('cm-epic-freeflow-notes')));
 console.log('Freeflow Notes scope and EOF termination passed.');
+
+const microSource = '@00:01.000 soft {{fade}}\n  @ implicit\nordinary @ text\n---';
+const microTokens = epicSyntax(microSource);
+assert.equal(microTokens.lines.filter(line => line.className.includes('epic-micro-event')).length, 2);
+assert.equal(microTokens.marks.filter(mark => mark.className === 'epic-micro-event-marker').length, 2);
+for (const [text, cls] of [['@', 'epic-micro-event-marker'], ['00:01.000', 'epic-time'], ['{{fade}}', 'epic-instruction']]) {
+  assert.ok(microTokens.marks.some(mark => mark.className === cls && microSource.slice(mark.from, mark.to) === text));
+}
+for (const source of ['---\n@ header\n---', '[{&}Verse]\n@ prose\n:::', '{{note\n@ instruction\n}}']) {
+  assert.ok(!epicSyntax(source).marks.some(mark => mark.className === 'epic-micro-event-marker'));
+}
+console.log('Micro-event markers preserve timestamp and instruction highlighting.');

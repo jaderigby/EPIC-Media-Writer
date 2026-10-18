@@ -35,6 +35,11 @@ export function epicSyntax(source) {
       classes.push('epic-section');
     }
     if (opensFreeflow) freeflow = true;
+    if (!header && !freeflow && !block && /^\s*@/.test(text)) {
+      classes.push('epic-micro-event');
+      const at = text.indexOf('@');
+      add(at, at + 1, 'epic-micro-event-marker');
+    }
     if (trimmed.startsWith('{{') && !trimmed.includes('}}')) {
       block = trimmed.startsWith('{{&}') ? 'epic-freeform-notation' : 'epic-instruction';
     }
