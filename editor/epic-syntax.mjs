@@ -88,7 +88,7 @@ export function epicSyntax(source) {
       for (const match of text.matchAll(pattern)) {
         if (inCode(match)) continue;
         const start = match.index, end = start + match[0].length;
-        add(start, start + width, 'md-marker'); add(start + width, end - width, className); add(end - width, end, 'md-marker');
+        add(start, start + width, 'md-marker md-emphasis-marker'); add(start + width, end - width, className); add(end - width, end, 'md-marker md-emphasis-marker');
       }
     }
     if (classes.length) lineStyles.push({ from: offset, className: classes.join(' ') });
