@@ -48,3 +48,17 @@ for (const source of ['---\n@ header\n---', '[{&}Verse]\n@ prose\n:::', '{{note\
   assert.ok(!epicSyntax(source).marks.some(mark => mark.className === 'epic-micro-event-marker'));
 }
 console.log('Micro-event markers preserve timestamp and instruction highlighting.');
+
+for (const fence of ['```', '~~~~']) {
+  const source = `${fence}text\n# literal **bold**\n---\n{{instruction}}\n${fence}\n## Title\n**after**`;
+  const result = epicSyntax(source);
+  const marks = cls => result.marks.filter(m => m.className === cls).map(m => source.slice(m.from, m.to));
+  assert.deepEqual(marks('md-heading-marker'), ['##']);
+  assert.deepEqual(marks('md-heading'), [' Title']);
+  assert.deepEqual(marks('md-bold'), ['after']);
+  assert.equal(marks('md-code-block').length, 5);
+  assert.equal(result.lines.length, 0, 'Literal code cannot change header or instruction state');
+}
+assert.equal(epicSyntax('```\n# still code').marks.at(-1).className, 'md-code-block');
+assert.ok(!epicSyntax('#hashtag\n####### invalid').marks.some(m => m.className === 'md-heading-marker'));
+console.log('Fenced code and title highlighting passed.');

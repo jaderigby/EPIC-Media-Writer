@@ -5,12 +5,29 @@ export function epicSyntax(source) {
   const lineStyles = [];
   let offset = 0, fences = 0, header = false, freeflow = false, block = '', entry = false;
   let freeflowNotes = false;
+  let codeFence = '';
   const timeLine = text => /^\s*\d{2}:\d{2}(?::\d{2})?\.\d{3}(?:\s*-->\s*\d{2}:\d{2}(?::\d{2})?\.\d{3})?\s*$/.test(text);
   for (let index = 0; index < lines.length; index++) {
     const text = lines[index], trimmed = text.trim(), classes = [];
     const add = (from, to, className) => {
       if (to > from) marks.push({ from: offset + from, to: offset + to, className });
     };
+    const fence = !header && !block && text.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (codeFence || (fence && (fence[1][0] !== '`' || !fence[2].includes('`')))) {
+      add(0, text.length, 'md-code-block');
+      if (codeFence) {
+        if (fence && fence[1][0] === codeFence[0] && fence[1].length >= codeFence.length && !fence[2].trim()) codeFence = '';
+      } else codeFence = fence[1];
+      offset += text.length + 1;
+      continue;
+    }
+    const heading = !header && !block && text.match(/^( {0,3})(#{1,6})(?:[ \t]+(.*)|$)/);
+    if (heading) {
+      add(heading[1].length, heading[1].length + heading[2].length, 'md-heading-marker');
+      add(heading[1].length + heading[2].length, text.length, 'md-heading');
+      offset += text.length + 1;
+      continue;
+    }
     const startsEntry = /^\s*\d+\s*$/.test(text) && timeLine(lines[index + 1] || '');
     if (startsEntry) entry = true;
     if (!trimmed) entry = false;
