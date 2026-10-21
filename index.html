@@ -910,7 +910,21 @@
 
 
     .md-heading { color: #ffb1f0; font-weight: 700; }
-    .md-heading-marker { color: #cc29ae; }
+    .md-heading-marker {
+      color: #cc29ae;
+      font-weight: 700;
+      /* Center the glyphs without expanding the editor's line box. */
+      line-height: 0;
+      vertical-align: middle;
+      position: relative;
+      top: -0.05em;
+    }
+    .md-heading-marker-1 { font-size: 3.5em; }
+    .md-heading-marker-2 { font-size: 2.8em; }
+    .md-heading-marker-3 { font-size: 2em; }
+    .md-heading-marker-4 { font-size: 1.5em; }
+    .md-heading-marker-5 { font-size: 1.2em; }
+    .md-heading-marker-6 { font-size: 1em; }
     .md-code-block { color: #b9e6b0; background: rgb(255 255 255 / 6%); }
 
     .md-bold {

@@ -23,7 +23,7 @@ export function epicSyntax(source) {
     }
     const heading = !header && !block && text.match(/^( {0,3})(#{1,6})(?:[ \t]+(.*)|$)/);
     if (heading) {
-      add(heading[1].length, heading[1].length + heading[2].length, 'md-heading-marker');
+      add(heading[1].length, heading[1].length + heading[2].length, `md-heading-marker md-heading-marker-${heading[2].length}`);
       add(heading[1].length + heading[2].length, text.length, 'md-heading');
       offset += text.length + 1;
       continue;
